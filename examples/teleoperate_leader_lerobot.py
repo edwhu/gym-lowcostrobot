@@ -12,11 +12,12 @@ def do_sim(args):
 
     env = gym.make(args.env_name, render_mode="human")
 
-    offsets = [0, -np.pi/2, -np.pi/2, 0, -np.pi/2, 0]
+    # offsets = [0, -np.pi/2, -np.pi/2, 0, -np.pi/2, 0]
+    offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]
     counts_to_radians = np.pi * 2. / 4096.
     # get the start pos from .cache/calibration directory in your local lerobot
     start_pos = [2072, 2020, 1063, 3966, 3053, 1938]
-    axis_direction = [-1, -1, 1, -1, -1, -1]
+    axis_direction = [-1, -1, -1, 1, -1, -1]
     joint_commands = [0,0,0,0,0,0]
     leader_arm = DynamixelMotorsBus(
         port=args.device,
@@ -38,7 +39,7 @@ def do_sim(args):
     rewards = []
     timesteps = []
   
-    while env.viewer.is_running():
+    while env.unwrapped.viewer.is_running():
         positions = leader_arm.read("Present_Position")
         assert len(joint_commands) == len(positions)
         for i in range(len(joint_commands)):
@@ -48,7 +49,7 @@ def do_sim(args):
         ret = env.step(joint_commands)
 
         rewards.append(ret[1])
-        timesteps.append(env.data.time)
+        timesteps.append(env.unwrapped.data.time)
             
     plt.plot(timesteps, rewards)
     plt.show()
