@@ -1,3 +1,6 @@
+# Edward's modifications
+* updated teleoperate_leader_lerobot.py to work with our leader arm. 
+
 # Gym Low Cost Robot
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
