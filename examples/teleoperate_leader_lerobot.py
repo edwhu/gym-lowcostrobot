@@ -7,12 +7,21 @@ import gymnasium as gym
 import gym_lowcostrobot # Import the low-cost robot environments
 
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+from low_cost_robot.robot import Robot
+from low_cost_robot.dynamixel import Dynamixel
 
 def do_sim(args):
 
+    leader_dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name='/dev/ttyACM1').instantiate()
+    leader = Robot(leader_dynamixel, servo_ids=[1, 2, 3, 4, 5, 6])
+    leader.name = 'leader'
+    leader.set_trigger_torque()
+    leader_dynamixel.disconnect()
+    del leader
+
+
     env = gym.make(args.env_name, render_mode="human")
 
-    # offsets = [0, -np.pi/2, -np.pi/2, 0, -np.pi/2, 0]
     offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]
     counts_to_radians = np.pi * 2. / 4096.
     # get the start pos from .cache/calibration directory in your local lerobot
