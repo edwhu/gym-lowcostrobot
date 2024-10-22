@@ -2,6 +2,7 @@ import argparse
 from collections import defaultdict
 import os
 import time
+import cv2
 
 import mujoco
 import numpy as np
@@ -16,7 +17,7 @@ from low_cost_robot.dynamixel import Dynamixel
 
 
 def do_sim(args):
-
+    """Tele-op method, use for debugging"""
     leader_dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=args.device).instantiate()
     leader = Robot(leader_dynamixel, servo_ids=[1, 2, 3, 4, 5, 6])
     leader.name = 'leader'
@@ -140,6 +141,18 @@ def collect_demos(args):
             ep_dict['action'].append(np.asarray(joint_commands, dtype=np.int32))
             
             obs, rew, terminated, truncated, info = env.step(joint_commands)
+            # img = obs['image_top']
+            # print(f"image_top shape: {img.shape}")  # Should be (height, width, 3)
+            # if img.dtype != np.uint8:
+            #     img = (img * 255).astype(np.uint8)
+            # cv2.imshow('top', img)
+            # img = obs['image_wrist']
+            # print(f"image_wrist shape: {img.shape}")  # Should be (height, width, 3)
+            # if img.dtype != np.uint8:
+            #     img = (img * 255).astype(np.uint8)
+            # cv2.imshow('wrist', img)
+            # cv2.waitKey(1)
+
             for k, v in obs.items():
                 ep_dict['obs/' + k].append(v)
             ep_dict['reward'].append(rew)
@@ -159,6 +172,7 @@ def collect_demos(args):
         print("Clean up the environment.")
         # Here, we would give the user some time to clean up the environment and the robot. 
         start_time = time.time()
+        env.reset() # reset block position
         with tqdm(total=reset_seconds, desc="Waiting for reset...") as pbar:
             last_time = time.time()
             while time.time() - start_time < reset_seconds:
@@ -174,11 +188,13 @@ def collect_demos(args):
                 pbar.update(current_time - last_time)
                 last_time = current_time
 
+        for key in ep_dict:
+            print(key, ep_dict[key][0])
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Choose between 5dof and 6dof lowcost robot simulation.")
     parser.add_argument('--device', type=str, default='/dev/ttyACM0', help='Port name (e.g., COM1, /dev/ttyUSB0, /dev/tty.usbserial-*)')
-    # parser.add_argument('--env-name', type=str, default='PushCubeLoop-v0', help='Specify the gym-lowcost robot env to test.')
     parser.add_argument('--env-name', type=str, default='LiftCubeCamera-v0', help='Specify the gym-lowcost robot env to test.')
     parser.add_argument('--demo_folder', type=str, default='demos', help='Specify the local folder to save demos to')
     args = parser.parse_args()
