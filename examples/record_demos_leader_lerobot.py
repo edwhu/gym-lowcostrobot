@@ -65,14 +65,15 @@ def do_sim(args):
             joint_commands[i] = axis_direction[i] * \
                 (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
         
-        print("POSITIONS", positions) # [0, 4096]
-        print("JOINT COMMANDS", joint_commands) # [radians]
+        # print("POSITIONS", positions) # [0, 4096]
+        # print("JOINT COMMANDS", joint_commands) # [radians]
 
         # send joint commands to simulated environment
-        ret = env.step(joint_commands)
+        obs, rew, terminated, truncated, info = env.step(joint_commands)
+        print("REWARD", rew)
 
         # record rewards, timesteps
-        rewards.append(ret[1])
+        rewards.append(rew)
         timesteps.append(env.unwrapped.data.time)
             
     plt.plot(timesteps, rewards)
@@ -124,9 +125,28 @@ def collect_demos(args):
     while demos_collected < num_demos:
         ep_dict = defaultdict(list)
         obs, info = env.reset()
-        input(f"Demo {demos_collected + 1}/{num_demos}, Press Enter to start the collection.")
         for k, v in obs.items():
             ep_dict['obs/' + k].append(v)
+        
+        print("Clean up the environment.")
+        # Here, we would give the user some time to clean up the environment and the robot. 
+        start_time = time.time()
+        with tqdm(total=reset_seconds, desc="Waiting for reset...") as pbar:
+            last_time = time.time()
+            while time.time() - start_time < reset_seconds:
+                positions = leader_arm.read("Present_Position")
+                joint_commands = [0] * len(positions)
+                # Compute action (joint commands) based on the position changes
+                for i in range(len(joint_commands)):
+                    joint_commands[i] = axis_direction[i] * \
+                        (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
+                
+                ret = env.step(joint_commands)
+                current_time = time.time()
+                pbar.update(current_time - last_time)
+                last_time = current_time
+
+        input(f"Demo {demos_collected + 1}/{num_demos}, Press Enter to start the collection.")
 
         for timestep in trange(demo_length, desc="Collecting demo"):
             start_time = time.time()
@@ -138,19 +158,16 @@ def collect_demos(args):
                 joint_commands[i] = axis_direction[i] * \
                     (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
             
-            ep_dict['action'].append(np.asarray(joint_commands, dtype=np.int32))
+            ep_dict['action'].append(np.asarray(joint_commands, dtype=np.float32))
             
             obs, rew, terminated, truncated, info = env.step(joint_commands)
+            print("REWARD", rew)
+            
+            # doesn't work on mac
             # img = obs['image_top']
-            # print(f"image_top shape: {img.shape}")  # Should be (height, width, 3)
-            # if img.dtype != np.uint8:
-            #     img = (img * 255).astype(np.uint8)
-            # cv2.imshow('top', img)
+            # cv2.imshow('top', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             # img = obs['image_wrist']
-            # print(f"image_wrist shape: {img.shape}")  # Should be (height, width, 3)
-            # if img.dtype != np.uint8:
-            #     img = (img * 255).astype(np.uint8)
-            # cv2.imshow('wrist', img)
+            # cv2.imshow('wrist', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             # cv2.waitKey(1)
 
             for k, v in obs.items():
@@ -168,25 +185,6 @@ def collect_demos(args):
             np.savez_compressed(demo_path, **ep_dict)
         else:
             print("Demo not saved.")
-        
-        print("Clean up the environment.")
-        # Here, we would give the user some time to clean up the environment and the robot. 
-        start_time = time.time()
-        env.reset() # reset block position
-        with tqdm(total=reset_seconds, desc="Waiting for reset...") as pbar:
-            last_time = time.time()
-            while time.time() - start_time < reset_seconds:
-                positions = leader_arm.read("Present_Position")
-                joint_commands = [0] * len(positions)
-                # Compute action (joint commands) based on the position changes
-                for i in range(len(joint_commands)):
-                    joint_commands[i] = axis_direction[i] * \
-                        (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-                
-                ret = env.step(joint_commands)
-                current_time = time.time()
-                pbar.update(current_time - last_time)
-                last_time = current_time
 
         for key in ep_dict:
             print(key, ep_dict[key][0])

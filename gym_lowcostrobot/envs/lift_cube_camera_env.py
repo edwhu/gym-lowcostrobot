@@ -112,7 +112,7 @@ class LiftCubeCameraEnv(Env):
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=640, width=640)
 
         # Set additional utils
-        self.threshold_height = 0.5
+        self.threshold_height = 0.08
         # self.cube_low = np.array([-0.15, 0.10, 0.015])
         # self.cube_high = np.array([0.15, 0.25, 0.015])
         self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
@@ -265,7 +265,11 @@ class LiftCubeCameraEnv(Env):
         reward_height = cube_z - self.threshold_height
         reward_distance = -ee_to_cube
         reward = reward_height + reward_distance
-        return observation, reward, False, False, {}
+
+        # New binary reward: lifting cube beyond a height
+        reward_binary = cube_z >= self.threshold_height
+        return observation, reward_binary, False, False, {}
+        # return observation, reward, False, False, {}
 
     def render(self):
         if self.render_mode == "human":
