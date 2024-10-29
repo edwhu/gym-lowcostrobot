@@ -65,8 +65,9 @@ def do_sim(args):
             joint_commands[i] = axis_direction[i] * \
                 (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
         
-        # print("POSITIONS", positions) # [0, 4096]
-        # print("JOINT COMMANDS", joint_commands) # [radians]
+        print("POSITIONS", positions) # [0, 4096]
+        print("QPOS", env.unwrapped.data.qpos) # [radians]
+        print("JOINT COMMANDS", joint_commands) # [radians]
 
         # send joint commands to simulated environment
         obs, rew, terminated, truncated, info = env.step(joint_commands)
@@ -117,9 +118,9 @@ def collect_demos(args):
     if not os.path.exists(demo_folder):
         os.makedirs(demo_folder)
     
-    demo_length = 600 # in steps
+    demo_length = 400 # in steps
     reset_seconds = 7 # in seconds
-    num_demos = 10
+    num_demos = 15
     demos_collected = 0
   
     while demos_collected < num_demos:
