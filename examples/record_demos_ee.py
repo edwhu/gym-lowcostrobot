@@ -65,13 +65,26 @@ def do_sim(args):
             joint_commands[i] = axis_direction[i] * \
                 (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
         
-        print("POSITIONS", positions) # [0, 4096]
-        print("QPOS", env.unwrapped.data.qpos) # [radians]
-        print("JOINT COMMANDS", joint_commands) # [radians]
+        # print("POSITIONS", positions) # [0, 4096]
+        # print("JOINT COMMANDS", joint_commands) # [radians]
+
+        # action_ee_rest = np.array([-8.49694533e-04,-4.30745851e-02,  8.86016245e-02, -1.31839641e+00])
+        # action_ee_rest = np.array([-0.02238554,  0.05071044,  0.04954169, -1.28663038])
+        # action_ee_closed = np.array([-0.00229872,  0.00314991,  0.09843007, -0.14112724])
+        # action_ee_zero = np.array([0, 0, 0, 0])
+        # action_ee_random = np.array([0.00278172, -0.04430627,  0.08725664, -1.88258359])
+
+        action_raise_closed = np.array([-0.00687252,  0.23894415,  0.21946438, -0.1635956 ])
 
         # send joint commands to simulated environment
-        obs, rew, terminated, truncated, info = env.step(joint_commands)
-        print("REWARD", rew)
+        # obs, rew, terminated, truncated, info = env.step(joint_commands)
+        obs, rew, terminated, truncated, info = env.step(action_raise_closed)
+        # print("REWARD", rew)
+        print("QPOS\t\t", env.unwrapped.data.qpos[:6]) # [radians]
+        print("EE DESIRED\t", action_raise_closed)
+        print("EE ACTUAL\t", info['action_ee']) # print ee position
+        # print(list(obs.keys()))
+        # print("ACTION_EE", info['action_ee'])
 
         # record rewards, timesteps
         rewards.append(rew)
@@ -199,4 +212,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     do_sim(args)
-    collect_demos(args)
+    # collect_demos(args)
