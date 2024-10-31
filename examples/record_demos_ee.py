@@ -77,14 +77,13 @@ def do_sim(args):
         action_raise_closed = np.array([-0.00687252,  0.23894415,  0.21946438, -0.1635956 ])
 
         # send joint commands to simulated environment
-        # obs, rew, terminated, truncated, info = env.step(joint_commands)
-        obs, rew, terminated, truncated, info = env.step(action_raise_closed)
+        obs, rew, terminated, truncated, info = env.step(joint_commands)
+        # obs, rew, terminated, truncated, info = env.step(action_raise_closed)
         # print("REWARD", rew)
         print("QPOS\t\t", env.unwrapped.data.qpos[:6]) # [radians]
         print("EE DESIRED\t", action_raise_closed)
         print("EE ACTUAL\t", info['action_ee']) # print ee position
         # print(list(obs.keys()))
-        # print("ACTION_EE", info['action_ee'])
 
         # record rewards, timesteps
         rewards.append(rew)
@@ -132,8 +131,8 @@ def collect_demos(args):
         os.makedirs(demo_folder)
     
     demo_length = 400 # in steps
-    reset_seconds = 7 # in seconds
-    num_demos = 15
+    reset_seconds = 2 # in seconds
+    num_demos = 20
     demos_collected = 0
   
     while demos_collected < num_demos:
@@ -172,8 +171,6 @@ def collect_demos(args):
                 joint_commands[i] = axis_direction[i] * \
                     (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
             
-            ep_dict['action'].append(np.asarray(joint_commands, dtype=np.float32))
-            
             obs, rew, terminated, truncated, info = env.step(joint_commands)
             print("REWARD", rew)
             
@@ -183,6 +180,10 @@ def collect_demos(args):
             # img = obs['image_wrist']
             # cv2.imshow('wrist', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             # cv2.waitKey(1)
+
+            # NOTE: Save the ee action that WOULD have been taken to get to this position
+            # Since we don't have forward kinematics code on the leader robot, we need this hacky solution
+            ep_dict['action'].append(np.asarray(info["action_ee"], dtype=np.float32))
 
             for k, v in obs.items():
                 ep_dict['obs/' + k].append(v)
@@ -211,5 +212,5 @@ if __name__ == "__main__":
     parser.add_argument('--demo_folder', type=str, default='demos', help='Specify the local folder to save demos to')
     args = parser.parse_args()
 
-    do_sim(args)
-    # collect_demos(args)
+    # do_sim(args)
+    collect_demos(args)
