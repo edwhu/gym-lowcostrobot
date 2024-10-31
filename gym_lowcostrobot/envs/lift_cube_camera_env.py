@@ -176,7 +176,6 @@ class LiftCubeCameraEnv(Env):
         # Compute the new joint positions
         q_target_pos = qpos + qdot * step
 
-        print("Q_TARGET_POS:", q_target_pos)
         return q_target_pos
 
     def apply_action(self, action):
