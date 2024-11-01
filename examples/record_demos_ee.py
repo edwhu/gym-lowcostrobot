@@ -102,7 +102,7 @@ def collect_demos(args):
     leader_dynamixel.disconnect()
     del leader
 
-    env = gym.make(args.env_name, render_mode="human")
+    env = gym.make(args.env_name, render_mode="human", action_mode="ee")
 
     # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
     offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
@@ -205,6 +205,78 @@ def collect_demos(args):
             print(key, ep_dict[key][0])
 
 
+def collect_demos_scripted(args):
+
+    env = gym.make(args.env_name, render_mode="human", action_mode="ee")
+
+    # Create a folder to save demo data
+    demo_folder = args.demo_folder
+    if not os.path.exists(demo_folder):
+        os.makedirs(demo_folder)
+    
+    demo_length = 400 # in steps
+    reset_seconds = 0.5 # in seconds
+    num_demos = 20
+    demos_collected = 0
+  
+    while demos_collected < num_demos:
+        ep_dict = defaultdict(list)
+        obs, info = env.reset()
+        for k, v in obs.items():
+            ep_dict['obs/' + k].append(v)
+        
+        env.reset()
+
+        print(f"Demo {demos_collected + 1}/{num_demos}.")
+
+        # Get position of cube
+        cube_pos = env.unwrapped.get_cube_pos()
+        cube_pos_gripper_above = np.append(cube_pos, -1.3) + np.array([0, 0.03, 0.10, 0])
+        cube_pos_gripper_open = np.append(cube_pos, -1.3) + np.array([0, 0.03, 0.01, 0])
+        cube_pos_gripper_closed = np.append(cube_pos, -0.58) + np.array([0, 0.03, 0.01, 0])
+        cube_pos_gripper_up = np.append(cube_pos, -0.58) + np.array([0, -0.05, 0.20, 0])
+
+        timestep = 0
+
+        def step_helper(action):
+            obs, rew, terminated, truncated, info = env.step(action)
+            nonlocal timestep
+            timestep += 1
+
+            ep_dict['action'].append(np.asarray(action, dtype=np.float32))
+            for k, v in obs.items():
+                ep_dict['obs/' + k].append(v)
+            ep_dict['reward'].append(rew)
+            ep_dict['terminated'].append(terminated)
+            ep_dict['truncated'].append(truncated)
+            for k, v in info.items():
+                ep_dict['info/' + k].append(v)
+        
+        # Move hand over cube
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above) > 0.015):
+            step_helper(cube_pos_gripper_above)
+            print("ABOVE", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above))
+
+        # Lower hand to above cube
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open) > 0.015):
+            step_helper(cube_pos_gripper_open)
+            print("OPEN", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open))
+        
+        # Close gripper
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed) > 0.015):
+            step_helper(cube_pos_gripper_closed)
+            # print(env.unwrapped.get_ee_pos())
+            print("CLOSED", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed))
+        
+        # Lift Up
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up) > 0.01):
+            step_helper(cube_pos_gripper_up)
+            print("UP", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up))
+        
+        for key in ep_dict:
+            print(key, ep_dict[key][0])
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Choose between 5dof and 6dof lowcost robot simulation.")
     parser.add_argument('--device', type=str, default='/dev/ttyACM0', help='Port name (e.g., COM1, /dev/ttyUSB0, /dev/tty.usbserial-*)')
@@ -213,4 +285,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # do_sim(args)
-    collect_demos(args)
+    # collect_demos(args)
+    collect_demos_scripted(args)

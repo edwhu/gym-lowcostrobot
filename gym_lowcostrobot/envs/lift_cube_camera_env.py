@@ -278,7 +278,7 @@ class LiftCubeCameraEnv(Env):
         reward = reward_height + reward_distance
 
         # New binary reward: lifting cube beyond a height
-        reward_binary = cube_z >= self.threshold_height
+        reward_binary = float(cube_z >= self.threshold_height)
 
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
@@ -306,3 +306,14 @@ class LiftCubeCameraEnv(Env):
             self.renderer.close()
         if self.render_mode == "rgb_array":
             self.rgb_array_renderer.close()
+    
+    def get_ee_pos(self):
+        ee_id = self.model.site("end_effector").id
+        ee_pos = np.array([0.0, 0.0, 0.0, 0.0])
+        ee_pos[:3] = self.data.site_xpos[ee_id]
+        ee_pos[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
+        return ee_pos
+
+    def get_cube_pos(self):
+        cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
+        return cube_pos
