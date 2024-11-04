@@ -25,7 +25,7 @@ def do_sim(args):
     leader_dynamixel.disconnect()
     del leader
 
-    env = gym.make(args.env_name, render_mode="human", action_mode="ee")
+    env = gym.make(args.env_name, render_mode="human", observation_mode="both", action_mode="joint")
 
     # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
     offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
@@ -72,8 +72,8 @@ def do_sim(args):
 
         # send joint commands to simulated environment
         obs, rew, terminated, truncated, info = env.step(joint_commands)
-        print("REWARD", rew)
-        print("CUBE POS", env.unwrapped.get_cube_pos())
+        # print("REWARD", rew)
+        print("CUBE POS", obs['cube_pos'])
 
         # record rewards, timesteps
         rewards.append(rew)
@@ -92,7 +92,7 @@ def collect_demos(args):
     leader_dynamixel.disconnect()
     del leader
 
-    env = gym.make(args.env_name, render_mode="human")
+    env = gym.make(args.env_name, render_mode="human", observation_mode="both")
 
     # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
     offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
@@ -121,8 +121,8 @@ def collect_demos(args):
         os.makedirs(demo_folder)
     
     demo_length = 400 # in steps
-    reset_seconds = 7 # in seconds
-    num_demos = 15
+    reset_seconds = 0.5 # in seconds
+    num_demos = 20
     demos_collected = 0
   
     while demos_collected < num_demos:
@@ -161,11 +161,13 @@ def collect_demos(args):
             for i in range(len(joint_commands)):
                 joint_commands[i] = axis_direction[i] * \
                     (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-            
+            joint_commands[0] = 0.0 # disable movement along joint1
+
             ep_dict['action'].append(np.asarray(joint_commands, dtype=np.float32))
             
             obs, rew, terminated, truncated, info = env.step(joint_commands)
             print("REWARD", rew)
+            print("CUBE POS", obs['cube_pos'])
             
             # doesn't work on mac
             # img = obs['image_top']
@@ -176,7 +178,6 @@ def collect_demos(args):
 
             for k, v in obs.items():
                 ep_dict['obs/' + k].append(v)
-            ep_dict['obs/cube_pos'].append(env.unwrapped.get_cube_pos())
             ep_dict['reward'].append(rew)
             ep_dict['terminated'].append(terminated)
             ep_dict['truncated'].append(truncated)
