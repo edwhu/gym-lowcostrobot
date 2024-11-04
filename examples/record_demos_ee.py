@@ -216,7 +216,7 @@ def collect_demos_scripted(args):
     
     demo_length = 400 # in steps
     reset_seconds = 0.5 # in seconds
-    num_demos = 20
+    num_demos = 30
     demos_collected = 0
   
     while demos_collected < num_demos:
@@ -234,7 +234,7 @@ def collect_demos_scripted(args):
         cube_pos_gripper_above = np.append(cube_pos, -1.3) + np.array([0, 0.03, 0.10, 0])
         cube_pos_gripper_open = np.append(cube_pos, -1.3) + np.array([0, 0.03, 0.01, 0])
         cube_pos_gripper_closed = np.append(cube_pos, -0.58) + np.array([0, 0.03, 0.01, 0])
-        cube_pos_gripper_up = np.append(cube_pos, -0.58) + np.array([0, -0.05, 0.20, 0])
+        cube_pos_gripper_up = np.append(cube_pos, -0.58) + np.array([0, -0.05, 0.14, 0])
 
         timestep = 0
 
@@ -242,6 +242,7 @@ def collect_demos_scripted(args):
             obs, rew, terminated, truncated, info = env.step(action)
             nonlocal timestep
             timestep += 1
+            print("TIME", timestep)
 
             ep_dict['action'].append(np.asarray(action, dtype=np.float32))
             for k, v in obs.items():
@@ -255,26 +256,33 @@ def collect_demos_scripted(args):
         # Move hand over cube
         while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above) > 0.015):
             step_helper(cube_pos_gripper_above)
-            print("ABOVE", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above))
+            # print("ABOVE", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above))
 
         # Lower hand to above cube
         while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open) > 0.015):
             step_helper(cube_pos_gripper_open)
-            print("OPEN", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open))
+            # print("OPEN", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open))
         
         # Close gripper
         while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed) > 0.015):
             step_helper(cube_pos_gripper_closed)
-            # print(env.unwrapped.get_ee_pos())
-            print("CLOSED", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed))
+            # print("CLOSED", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed))
         
         # Lift Up
-        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up) > 0.01):
+        # while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up) > 0.01):
+        while timestep < demo_length:
             step_helper(cube_pos_gripper_up)
-            print("UP", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up))
-        
+            # print("UP", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up))
+                
         for key in ep_dict:
-            print(key, ep_dict[key][0])
+            print(key, ep_dict[key][-1])
+        
+        # Save Demo
+        if ep_dict['reward'][-1] > 0:
+            "SAVING DEMO"
+            demos_collected += 1
+            demo_path = os.path.join(demo_folder, f'demo_{demos_collected}.npz')
+            np.savez_compressed(demo_path, **ep_dict)
 
 
 if __name__ == "__main__":

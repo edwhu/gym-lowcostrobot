@@ -64,14 +64,16 @@ def do_sim(args):
             # move in the axis direction * (position change in radians) + offset
             joint_commands[i] = axis_direction[i] * \
                 (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
+        joint_commands[0] = 0.0 # disable movement along joint1
         
-        print("POSITIONS", positions) # [0, 4096]
-        print("QPOS", env.unwrapped.data.qpos) # [radians]
-        print("JOINT COMMANDS", joint_commands) # [radians]
+        # print("POSITIONS", positions) # [0, 4096]
+        # print("QPOS", env.unwrapped.data.qpos) # [radians]
+        # print("JOINT COMMANDS", joint_commands) # [radians]
 
         # send joint commands to simulated environment
         obs, rew, terminated, truncated, info = env.step(joint_commands)
         print("REWARD", rew)
+        print("CUBE POS", env.unwrapped.get_cube_pos())
 
         # record rewards, timesteps
         rewards.append(rew)
@@ -141,7 +143,8 @@ def collect_demos(args):
                 for i in range(len(joint_commands)):
                     joint_commands[i] = axis_direction[i] * \
                         (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-                
+                joint_commands[0] = 0.0 # disable movement along joint1
+
                 ret = env.step(joint_commands)
                 current_time = time.time()
                 pbar.update(current_time - last_time)
@@ -173,6 +176,7 @@ def collect_demos(args):
 
             for k, v in obs.items():
                 ep_dict['obs/' + k].append(v)
+            ep_dict['obs/cube_pos'].append(env.unwrapped.get_cube_pos())
             ep_dict['reward'].append(rew)
             ep_dict['terminated'].append(terminated)
             ep_dict['truncated'].append(truncated)
@@ -198,5 +202,5 @@ if __name__ == "__main__":
     parser.add_argument('--demo_folder', type=str, default='demos', help='Specify the local folder to save demos to')
     args = parser.parse_args()
 
-    do_sim(args)
+    # do_sim(args)
     collect_demos(args)

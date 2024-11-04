@@ -247,7 +247,7 @@ class LiftCubeCameraEnv(Env):
         # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         # Set a better resting position initially
-        robot_qpos = np.array([1.90839136e-02,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
+        robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
             1.64550541e+00, -1.30162992e+00])
 
         self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
