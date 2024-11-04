@@ -255,8 +255,10 @@ class LiftCubeCameraEnv(Env):
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
-
-        return self.get_observation(), {}
+        
+        observation = self.get_observation()
+        info = {'image_front': observation['image_front']}
+        return observation, info
 
     def step(self, action):
         # Perform the action and step the simulation
@@ -287,6 +289,8 @@ class LiftCubeCameraEnv(Env):
         action_ee[:3] = self.data.site_xpos[ee_id]
         action_ee[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
         info["action_ee"] = action_ee
+        # Add image for rendering even when actual observation image is zeroed
+        info["image_front"] = observation["image_front"]
 
         return observation, reward_binary, False, False, info
 
