@@ -117,8 +117,8 @@ class LiftCubeCameraEnv(Env):
         # self.cube_high = np.array([0.15, 0.25, 0.015])
         # self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
         # self.cube_high = np.array([0.1, 0.17, 0.015])
-        self.cube_low = np.array([-0.001, 0.15, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.001, 0.155, 0.015])
+        self.cube_low = np.array([-0.001, 0.151, 0.015])  # move the cube closer to the robot
+        self.cube_high = np.array([0.001, 0.151, 0.015])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
