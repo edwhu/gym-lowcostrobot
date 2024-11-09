@@ -99,6 +99,7 @@ class LiftCubeCameraEnv(Env):
             self.renderer = mujoco.Renderer(self.model)
         if self.observation_mode in ["state", "both"]:
             observation_subspaces["cube_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
+            observation_subspaces["ee_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
         self.observation_space = gym.spaces.Dict(observation_subspaces)
 
         # Set the render utilities
@@ -117,8 +118,8 @@ class LiftCubeCameraEnv(Env):
         # self.cube_high = np.array([0.15, 0.25, 0.015])
         # self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
         # self.cube_high = np.array([0.1, 0.17, 0.015])
-        self.cube_low = np.array([-0.001, 0.151, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.001, 0.151, 0.015])
+        self.cube_low = np.array([-0.001, 0.150, 0.015])  # move the cube closer to the robot
+        self.cube_high = np.array([0.001, 0.154, 0.015])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -235,6 +236,7 @@ class LiftCubeCameraEnv(Env):
             observation["image_wrist"] = self.renderer.render()
         if self.observation_mode in ["state", "both"]:
             observation["cube_pos"] = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3].astype(np.float32)
+            observation["ee_pos"] = self.get_ee_pos().astype(np.float32)
         return observation
 
     def reset(self, seed=None, options=None):
@@ -316,7 +318,9 @@ class LiftCubeCameraEnv(Env):
         ee_pos = np.array([0.0, 0.0, 0.0, 0.0])
         ee_pos[:3] = self.data.site_xpos[ee_id]
         ee_pos[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
-        return ee_pos.copy()
+        # TODO: For now, I hardcoded to only return the y and z coordinates of EE pos. Later, delete [1:3] 
+        # for tasks with lateral motion.
+        return ee_pos[1:3].copy()
 
     def get_cube_pos(self):
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
