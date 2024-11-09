@@ -101,7 +101,7 @@ class LiftCubeCameraEnv(Env):
             self.renderer = mujoco.Renderer(self.model)
         if self.observation_mode in ["state", "both"]:
             observation_subspaces["cube_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
-            observation_subspaces["ee_pos"] = spaces.Box(low=-np.inf, high=np.inf, shape=(3,))
+            observation_subspaces["ee_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
         self.observation_space = gym.spaces.Dict(observation_subspaces)
 
         # Set the render utilities
@@ -115,11 +115,13 @@ class LiftCubeCameraEnv(Env):
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=640, width=640)
 
         # Set additional utils
-        self.threshold_height = 0.5
+        self.threshold_height = 0.08
         # self.cube_low = np.array([-0.15, 0.10, 0.015])
         # self.cube_high = np.array([0.15, 0.25, 0.015])
-        self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.1, 0.17, 0.015])
+        # self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
+        # self.cube_high = np.array([0.1, 0.17, 0.015])
+        self.cube_low = np.array([-0.001, 0.150, 0.015])  # move the cube closer to the robot
+        self.cube_high = np.array([0.001, 0.154, 0.015])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -132,7 +134,7 @@ class LiftCubeCameraEnv(Env):
         self.control_decimation = 4 # number of simulation steps per control step
 
 
-    def inverse_kinematics(self, ee_target_pos, step=0.2, joint_name="link_6", nb_dof=6, regularization=1e-6):
+    def inverse_kinematics(self, ee_target_pos, step=0.2, joint_name="end_effector", nb_dof=6, regularization=1e-6):
         """
         Computes the inverse kinematics for a robotic arm to reach the target end effector position.
 
@@ -144,19 +146,17 @@ class LiftCubeCameraEnv(Env):
         :return: numpy array of target joint positions
         """
         try:
-            # Get the joint ID from the name
-            joint_id = self.model.body(joint_name).id
+            # Get the site ID from the name
+            site_id = self.model.site(joint_name).id
         except KeyError:
-            raise ValueError(f"Body name '{joint_name}' not found in the model.")
+            raise ValueError(f"Site name '{joint_name}' not found in the model.")
 
-        # Get the current end effector position
-        # ee_pos = self.d.geom_xpos[joint_id]
-        ee_id = self.model.body(joint_name).id
-        ee_pos = self.data.geom_xpos[ee_id]
+        # Get the current end effector position from the site
+        ee_pos = self.data.site_xpos[site_id]
 
-        # Compute the Jacobian
+        # Compute the Jacobian for the end effector site
         jac = np.zeros((3, self.model.nv))
-        mujoco.mj_jacBodyCom(self.model, self.data, jac, None, joint_id)
+        mujoco.mj_jacSite(self.model, self.data, jac, None, site_id)
 
         # Compute the difference between target and current end effector positions
         delta_pos = ee_target_pos - ee_pos
@@ -174,7 +174,7 @@ class LiftCubeCameraEnv(Env):
             qdot /= qdot_norm
 
         # Read the current joint positions
-        qpos = self.data.qpos[self.arm_dof_id:self.arm_dof_id+nb_dof]
+        qpos = self.data.qpos[self.arm_dof_id:self.arm_dof_id + nb_dof]
 
         # Compute the new joint positions
         q_target_pos = qpos + qdot * step
@@ -190,16 +190,22 @@ class LiftCubeCameraEnv(Env):
         - Joint mode: [q1, q2, q3, q4, q5, q6, gripper]
         """
         if self.action_mode == "ee":
-            # raise NotImplementedError("EE mode not implemented yet")
-            ee_action, gripper_action = action[:3], action[-1]
+            if len(action) == 4:
+                # raise NotImplementedError("EE mode not implemented yet")
+                ee_action, gripper_action = action[:3], action[-1]
 
-            # Update the robot position based on the action
-            ee_id = self.model.body("link_6").id
-            ee_target_pos = self.data.xpos[ee_id] + ee_action
+                # Update the robot position based on the action
+                ee_id = self.model.site("end_effector").id
+                # ee_target_pos = self.data.site_xpos[ee_id] + ee_action
+                ee_target_pos = ee_action
 
-            # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
-            target_qpos = self.inverse_kinematics(ee_target_pos=ee_target_pos)
-            target_qpos[-1:] = gripper_action
+                # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
+                target_qpos = self.inverse_kinematics(ee_target_pos=ee_target_pos)
+                target_qpos[-1:] = gripper_action
+            else:
+                target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
+                target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
+                target_qpos = np.array(action).clip(target_low, target_high)
         elif self.action_mode == "joint":
             target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
             target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
@@ -234,6 +240,7 @@ class LiftCubeCameraEnv(Env):
             observation["image_wrist"] = self.renderer.render()
         if self.observation_mode in ["state", "both"]:
             observation["cube_pos"] = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3].astype(np.float32)
+            observation["ee_pos"] = self.get_ee_pos().astype(np.float32)
         return observation
 
     def reset(self, seed=None, options=None):
@@ -243,14 +250,21 @@ class LiftCubeCameraEnv(Env):
         # Reset the robot to the initial position and sample the cube position
         cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
         cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
-        robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+        # Set a better resting position initially
+        robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
+            1.64550541e+00, -1.30162992e+00])
+
         self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
         self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
-
-        return self.get_observation(), {}
+        
+        observation = self.get_observation()
+        info = {'image_front': observation['image_front']}
+        return observation, info
 
     def step(self, action):
         # Perform the action and step the simulation
@@ -262,15 +276,30 @@ class LiftCubeCameraEnv(Env):
         # Get the position of the cube and the distance between the end effector and the cube
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
         cube_z = cube_pos[2]
-        ee_id = self.model.body("link_6").id
-        ee_pos = self.data.geom_xpos[ee_id]
+        ee_id = self.model.site("end_effector").id
+        ee_pos = self.data.site_xpos[ee_id]
         ee_to_cube = np.linalg.norm(ee_pos - cube_pos)
 
         # Compute the reward
         reward_height = cube_z - self.threshold_height
         reward_distance = -ee_to_cube
         reward = reward_height + reward_distance
-        return observation, reward, False, False, {}
+
+        # New binary reward: lifting cube beyond a height
+        reward_binary = float(cube_z >= self.threshold_height)
+
+        info = {}
+        # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
+        ee_id = self.model.site("end_effector").id
+        action_ee = np.array([0.0, 0.0, 0.0, 0.0])
+        action_ee[:3] = self.data.site_xpos[ee_id]
+        action_ee[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
+        info["action_ee"] = action_ee
+        # Add image for rendering even when actual observation image is zeroed
+        info["image_front"] = observation["image_front"]
+
+        return observation, reward_binary, False, False, info
+
 
     def render(self):
         if self.render_mode == "human":
@@ -287,3 +316,16 @@ class LiftCubeCameraEnv(Env):
             self.renderer.close()
         if self.render_mode == "rgb_array":
             self.rgb_array_renderer.close()
+    
+    def get_ee_pos(self):
+        ee_id = self.model.site("end_effector").id
+        ee_pos = np.array([0.0, 0.0, 0.0, 0.0])
+        ee_pos[:3] = self.data.site_xpos[ee_id]
+        ee_pos[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
+        # TODO: For now, I hardcoded to only return the y and z coordinates of EE pos. Later, delete [1:3] 
+        # for tasks with lateral motion.
+        return ee_pos[1:3].copy()
+
+    def get_cube_pos(self):
+        cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
+        return cube_pos.copy()

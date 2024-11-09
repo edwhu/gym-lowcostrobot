@@ -25,7 +25,7 @@ def do_sim(args):
     leader_dynamixel.disconnect()
     del leader
 
-    env = gym.make(args.env_name, render_mode="human", observation_mode="both", action_mode="joint")
+    env = gym.make(args.env_name, render_mode="human", action_mode="ee")
 
     # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
     offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
@@ -64,16 +64,26 @@ def do_sim(args):
             # move in the axis direction * (position change in radians) + offset
             joint_commands[i] = axis_direction[i] * \
                 (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-        joint_commands[0] = 0.0 # disable movement along joint1
         
         # print("POSITIONS", positions) # [0, 4096]
-        # print("QPOS", env.unwrapped.data.qpos) # [radians]
         # print("JOINT COMMANDS", joint_commands) # [radians]
+
+        # action_ee_rest = np.array([-8.49694533e-04,-4.30745851e-02,  8.86016245e-02, -1.31839641e+00])
+        # action_ee_rest = np.array([-0.02238554,  0.05071044,  0.04954169, -1.28663038])
+        # action_ee_closed = np.array([-0.00229872,  0.00314991,  0.09843007, -0.14112724])
+        # action_ee_zero = np.array([0, 0, 0, 0])
+        # action_ee_random = np.array([0.00278172, -0.04430627,  0.08725664, -1.88258359])
+
+        action_raise_closed = np.array([-0.00687252,  0.23894415,  0.21946438, -0.1635956 ])
 
         # send joint commands to simulated environment
         obs, rew, terminated, truncated, info = env.step(joint_commands)
+        # obs, rew, terminated, truncated, info = env.step(action_raise_closed)
         # print("REWARD", rew)
-        print("CUBE POS", obs['cube_pos'])
+        print("QPOS\t\t", env.unwrapped.data.qpos[:6]) # [radians]
+        print("EE DESIRED\t", action_raise_closed)
+        print("EE ACTUAL\t", info['action_ee']) # print ee position
+        # print(list(obs.keys()))
 
         # record rewards, timesteps
         rewards.append(rew)
@@ -92,7 +102,7 @@ def collect_demos(args):
     leader_dynamixel.disconnect()
     del leader
 
-    env = gym.make(args.env_name, render_mode="human", observation_mode="both")
+    env = gym.make(args.env_name, render_mode="human", action_mode="ee")
 
     # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
     offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
@@ -121,7 +131,7 @@ def collect_demos(args):
         os.makedirs(demo_folder)
     
     demo_length = 400 # in steps
-    reset_seconds = 0.5 # in seconds
+    reset_seconds = 2 # in seconds
     num_demos = 20
     demos_collected = 0
   
@@ -143,8 +153,7 @@ def collect_demos(args):
                 for i in range(len(joint_commands)):
                     joint_commands[i] = axis_direction[i] * \
                         (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-                joint_commands[0] = 0.0 # disable movement along joint1
-
+                
                 ret = env.step(joint_commands)
                 current_time = time.time()
                 pbar.update(current_time - last_time)
@@ -161,13 +170,9 @@ def collect_demos(args):
             for i in range(len(joint_commands)):
                 joint_commands[i] = axis_direction[i] * \
                     (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-            joint_commands[0] = 0.0 # disable movement along joint1
-
-            ep_dict['action'].append(np.asarray(joint_commands, dtype=np.float32))
             
             obs, rew, terminated, truncated, info = env.step(joint_commands)
             print("REWARD", rew)
-            print("CUBE POS", obs['cube_pos'])
             
             # doesn't work on mac
             # img = obs['image_top']
@@ -175,6 +180,10 @@ def collect_demos(args):
             # img = obs['image_wrist']
             # cv2.imshow('wrist', cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             # cv2.waitKey(1)
+
+            # NOTE: Save the ee action that WOULD have been taken to get to this position
+            # Since we don't have forward kinematics code on the leader robot, we need this hacky solution
+            ep_dict['action'].append(np.asarray(info["action_ee"], dtype=np.float32))
 
             for k, v in obs.items():
                 ep_dict['obs/' + k].append(v)
@@ -196,6 +205,86 @@ def collect_demos(args):
             print(key, ep_dict[key][0])
 
 
+def collect_demos_scripted(args):
+
+    env = gym.make(args.env_name, render_mode="human", action_mode="ee")
+
+    # Create a folder to save demo data
+    demo_folder = args.demo_folder
+    if not os.path.exists(demo_folder):
+        os.makedirs(demo_folder)
+    
+    demo_length = 400 # in steps
+    reset_seconds = 0.5 # in seconds
+    num_demos = 30
+    demos_collected = 0
+  
+    while demos_collected < num_demos:
+        ep_dict = defaultdict(list)
+        obs, info = env.reset()
+        for k, v in obs.items():
+            ep_dict['obs/' + k].append(v)
+        
+        env.reset()
+
+        print(f"Demo {demos_collected + 1}/{num_demos}.")
+
+        # Get position of cube
+        cube_pos = env.unwrapped.get_cube_pos()
+        cube_pos_gripper_above = np.append(cube_pos, -1.3) + np.array([0, 0.03, 0.10, 0])
+        cube_pos_gripper_open = np.append(cube_pos, -1.3) + np.array([0, 0.03, 0.01, 0])
+        cube_pos_gripper_closed = np.append(cube_pos, -0.58) + np.array([0, 0.03, 0.01, 0])
+        cube_pos_gripper_up = np.append(cube_pos, -0.58) + np.array([0, -0.05, 0.14, 0])
+
+        timestep = 0
+
+        def step_helper(action):
+            obs, rew, terminated, truncated, info = env.step(action)
+            nonlocal timestep
+            timestep += 1
+            print("TIME", timestep)
+
+            ep_dict['action'].append(np.asarray(action, dtype=np.float32))
+            for k, v in obs.items():
+                ep_dict['obs/' + k].append(v)
+            ep_dict['reward'].append(rew)
+            ep_dict['terminated'].append(terminated)
+            ep_dict['truncated'].append(truncated)
+            for k, v in info.items():
+                ep_dict['info/' + k].append(v)
+        
+        # Move hand over cube
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above) > 0.015):
+            step_helper(cube_pos_gripper_above)
+            # print("ABOVE", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_above))
+
+        # Lower hand to above cube
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open) > 0.015):
+            step_helper(cube_pos_gripper_open)
+            # print("OPEN", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_open))
+        
+        # Close gripper
+        while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed) > 0.015):
+            step_helper(cube_pos_gripper_closed)
+            # print("CLOSED", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_closed))
+        
+        # Lift Up
+        # while np.any(np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up) > 0.01):
+        while timestep < demo_length:
+            step_helper(cube_pos_gripper_up)
+            # print("UP", np.abs(env.unwrapped.get_ee_pos() - cube_pos_gripper_up))
+                
+        for key in ep_dict:
+            print(key, ep_dict[key][-1])
+        
+        # Save Demo
+        if ep_dict['reward'][-1] > 0:
+            "SAVING DEMO"
+            demos_collected += 1
+            demo_path = os.path.join(demo_folder, f'demo_{demos_collected}.npz')
+            np.savez_compressed(demo_path, **ep_dict)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Choose between 5dof and 6dof lowcost robot simulation.")
     parser.add_argument('--device', type=str, default='/dev/ttyACM0', help='Port name (e.g., COM1, /dev/ttyUSB0, /dev/tty.usbserial-*)')
@@ -204,4 +293,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # do_sim(args)
-    collect_demos(args)
+    # collect_demos(args)
+    collect_demos_scripted(args)
