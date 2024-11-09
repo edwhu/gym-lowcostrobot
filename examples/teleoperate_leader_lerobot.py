@@ -22,8 +22,8 @@ def do_sim(args):
 
     env = gym.make(args.env_name, render_mode="human")
 
-    # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0] # leader1
-    offsets = [0, 0, np.pi/2, np.pi, 0, 0]
+    offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0] # leader1
+    # offsets = [0, 0, np.pi/2, np.pi, 0, 0]
     counts_to_radians = np.pi * 2. / 4096.
     # get the start pos from .cache/calibration directory in your local lerobot
     start_pos = [2072, 2020, 1063, 3966, 3053, 1938]

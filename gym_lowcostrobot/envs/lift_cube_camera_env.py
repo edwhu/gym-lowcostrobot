@@ -48,6 +48,7 @@ class LiftCubeCameraEnv(Env):
     - `"image_front"`: the front image of the camera of size (240, 320, 3)
     - `"image_top"`: the top image of the camera of size (240, 320, 3)
     - `"cube_pos"`: the position of the cube, as (x, y, z)
+    - `"ee_pos"`: the position of the ee, as (x, y, z)
 
     Three observation modes are available: "image" (default), "state", and "both".
 
@@ -58,6 +59,7 @@ class LiftCubeCameraEnv(Env):
     | `"image_front"` | ✓         |           | ✓        |
     | `"image_top"`   | ✓         |           | ✓        |
     | `"cube_pos"`    |           | ✓         | ✓        |
+    | `"ee_pos"`      |           | ✓         | ✓        |
 
     ## Reward
 
@@ -99,6 +101,7 @@ class LiftCubeCameraEnv(Env):
             self.renderer = mujoco.Renderer(self.model)
         if self.observation_mode in ["state", "both"]:
             observation_subspaces["cube_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
+            observation_subspaces["ee_pos"] = spaces.Box(low=-np.inf, high=np.inf, shape=(3,))
         self.observation_space = gym.spaces.Dict(observation_subspaces)
 
         # Set the render utilities
@@ -216,9 +219,11 @@ class LiftCubeCameraEnv(Env):
     def get_observation(self):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
         # qvel is [vx, vy, vz, wx, wy, wz, dq1, dq2, dq3, dq4, dq5, dq6, dgripper]
+        ee_id = self.model.body("link_6").id
         observation = {
             "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].astype(np.float32),
             "arm_qvel": self.data.qvel[self.arm_dof_vel_id:self.arm_dof_vel_id+self.nb_dof].astype(np.float32),
+            "ee_pos":   self.data.xpos[ee_id].astype(np.float32),
         }
         if self.observation_mode in ["image", "both"]:
             self.renderer.update_scene(self.data, camera="camera_front")

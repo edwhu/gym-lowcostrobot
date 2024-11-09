@@ -20,6 +20,13 @@ register(
 )
 
 register(
+    id="LiftCubeCameraPrivileged-v0",
+    entry_point="gym_lowcostrobot.envs:LiftCubeCameraEnv",
+    max_episode_steps=500,
+    kwargs={"observation_mode":"both"}
+)
+
+register(
     id="PickPlaceCube-v0",
     entry_point="gym_lowcostrobot.envs:PickPlaceCubeEnv",
     max_episode_steps=500,

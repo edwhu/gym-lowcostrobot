@@ -25,7 +25,7 @@ from lerobot.common.datasets.utils import (
 from lerobot.common.datasets.video_utils import VideoFrame, encode_video_frames
 from lerobot.scripts.push_dataset_to_hub import push_meta_data_to_hub, push_videos_to_hub, save_meta_data
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
-from lerobot.common.robot_devices.robots.koch import KochRobot
+from lerobot.common.robot_devices.robots.manipulator import ManipulatorRobot
 
 
 
@@ -180,7 +180,9 @@ class SimDynamixelMotorsBus:
             raise SimRobotDeviceNotConnectedError(f"SimDynamixelMotorsBus({self.path_scene}) is not connected. You need to run `motors_bus.connect()`.")
 
         values = []
-
+        if data_name == "Torque_Enable":
+            return self.torque_enable
+        
         if motor_names is None:
             for idx in range(1, 7):
                 values.append(self.data.qpos[idx-6-1])
@@ -203,7 +205,7 @@ class SimDynamixelMotorsBus:
                 f"SimDynamixelMotorsBus({self.path_scene}) is not connected. You need to run `motors_bus.connect()`."
             )        
         for idx, value in zip(motor_ids, values):
-            self.data.qpos[idx-6-1] = value
+            self.data.joint(f"joint_{idx}").qpos[0] = value
 
 
     ## convert the real robot joint positions to mujoco joint positions
@@ -244,18 +246,18 @@ class SimDynamixelMotorsBus:
             )
         
         ## do not write the following data for simulation motors so far
-        if data_name in ["Torque_Enable", "Operating_Mode", "Homing_Offset", "Drive_Mode", "Position_P_Gain", "Position_I_Gain", "Position_D_Gain"]:
+        if data_name in ["Operating_Mode", "Homing_Offset", "Drive_Mode", "Position_P_Gain", "Position_I_Gain", "Position_D_Gain"]:
             return
-
+        
+        if data_name == "Torque_Enable":
+            self.torque_enable = np.asarray([values])
+            return
         if motor_names is None or len(motor_names) == 6:
-            self.data.qpos[-6:] = self.real_to_mujoco(values, transforms=[0, 
-                                                                          -np.pi / 2.0,
-                                                                          np.pi + np.pi / 2.0,
-                                                                          0,
-                                                                          np.pi -np.pi / 2.0,
-                                                                          0], 
-                                                                          oppose=[-1,1,-1,1,-1,-1])
-
+            offsets = [0, -np.pi/2, -np.pi/2, 0, np.pi/2, -np.pi/2] # leader1
+            axis_direction = [1, 1, 1, -1, -1, 1]
+            mujoco_positions = self.real_to_mujoco(values, transforms=offsets, oppose=axis_direction )
+            for idx, value in enumerate(mujoco_positions):
+                self.data.joint(f"joint_{idx+1}").qpos[0] = value
             ## update the mujoco environment
             mujoco.mj_step(follower.model, follower.data)
             viewer.sync()
@@ -334,16 +336,14 @@ def key_callback(keycode):
 
     ## increase the motor position
     if chr(keycode) == "8":
-        idx_motor = current_motor_ids-6-1
-        follower.data.qpos[idx_motor] += 0.1
+        follower.data.joint(f"joint_{current_motor_ids}").qpos[0] += 0.1
         mujoco.mj_forward(follower.model, 
                 follower.data)
         viewer.sync()
 
     ## decrease the motor position
     if chr(keycode) == "9":
-        idx_motor = current_motor_ids-6-1
-        follower.data.qpos[idx_motor] -= 0.1
+        follower.data.joint(f"joint_{current_motor_ids}").qpos[0] -= 0.1
         mujoco.mj_forward(follower.model, 
                 follower.data)
         viewer.sync()
@@ -461,11 +461,14 @@ if __name__ == "__main__":
     ## start the mujoco environment and start the teleoperation
     ep_idx = 0
     with mujoco.viewer.launch_passive(follower.model, follower.data, key_callback=key_callback) as viewer:    
-
-        robot = KochRobot(leader_arms   = {"main": leader},
-                          follower_arms = {"main": follower},
-                          cameras       = cameras,
-                          calibration_path=args.calibration_path)
+        robot = ManipulatorRobot(
+            robot_type="koch",
+            calibration_dir=args.calibration_path,
+            leader_arms   = {"main": leader},
+            follower_arms = {"main": follower},
+            cameras = cameras,
+            gripper_open_degree = 35.156
+        )
         robot.connect()
         
         while stop_record == False:
