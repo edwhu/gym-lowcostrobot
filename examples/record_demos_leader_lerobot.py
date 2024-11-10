@@ -128,8 +128,6 @@ def collect_demos(args):
     while demos_collected < num_demos:
         ep_dict = defaultdict(list)
         obs, info = env.reset()
-        for k, v in obs.items():
-            ep_dict['obs/' + k].append(v)
         
         print("Clean up the environment.")
         # Here, we would give the user some time to clean up the environment and the robot. 
@@ -149,6 +147,10 @@ def collect_demos(args):
                 current_time = time.time()
                 pbar.update(current_time - last_time)
                 last_time = current_time
+        
+        obs = env.get_observation()
+        for k, v in obs.items():
+            ep_dict['obs/' + k].append(v)
 
         input(f"Demo {demos_collected + 1}/{num_demos}, Press Enter to start the collection.")
 
