@@ -16,7 +16,7 @@ register(
 register(
     id="LiftCubeCamera-v0",
     entry_point="gym_lowcostrobot.envs:LiftCubeCameraEnv",
-    max_episode_steps=500,
+    max_episode_steps=600,
 )
 
 register(
@@ -36,6 +36,12 @@ register(
     id="PushCube-v0",
     entry_point="gym_lowcostrobot.envs:PushCubeEnv",
     max_episode_steps=500,
+)
+
+register(
+    id="PushCubeSimple-v0",
+    entry_point="gym_lowcostrobot.envs:PushCubeSimpleEnv",
+    max_episode_steps=100,
 )
 
 register(
