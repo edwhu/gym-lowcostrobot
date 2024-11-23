@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .vscode/
 data_traces/*
+demos/
 
 # C extensions
 *.so

@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import gymnasium as gym
 import gym_lowcostrobot # Import the low-cost robot environments
 from tqdm import trange, tqdm
+import uuid
 
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 from low_cost_robot.robot import Robot
@@ -27,8 +28,8 @@ def do_sim(args):
 
     env = gym.make(args.env_name, render_mode="human", observation_mode="both", action_mode="joint")
 
-    # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
-    offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
+    offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
+    # offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
     counts_to_radians = np.pi * 2. / 4096.
     start_pos = [2072, 2020, 1063, 3966, 3053, 1938] # get the start pos from .cache/calibration directory in your local lerobot
     axis_direction = [-1, -1, -1, 1, -1, -1]
@@ -64,7 +65,7 @@ def do_sim(args):
             # move in the axis direction * (position change in radians) + offset
             joint_commands[i] = axis_direction[i] * \
                 (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-        joint_commands[0] = 0.0 # disable movement along joint1
+        # joint_commands[0] = 0.0 # disable movement along joint1
         
         # print("POSITIONS", positions) # [0, 4096]
         # print("QPOS", env.unwrapped.data.qpos) # [radians]
@@ -93,9 +94,10 @@ def collect_demos(args):
     del leader
 
     env = gym.make(args.env_name, render_mode="human", observation_mode="both")
+    session_uuid = uuid.uuid4()
 
-    # offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
-    offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
+    offsets = [0, 0, np.pi/2, np.pi, -np.pi/2, 0]  # leader1
+    # offsets = [0, 0, np.pi/2, np.pi, 0, 0]  # leader2 (white joint)
     counts_to_radians = np.pi * 2. / 4096.
     start_pos = [2072, 2020, 1063, 3966, 3053, 1938] # get the start pos from .cache/calibration directory in your local lerobot
     axis_direction = [-1, -1, -1, 1, -1, -1]
@@ -120,16 +122,20 @@ def collect_demos(args):
     if not os.path.exists(demo_folder):
         os.makedirs(demo_folder)
     
-    demo_length = 400 # in steps
+    demo_length = 1000 # in steps
     reset_seconds = 0.5 # in seconds
-    num_demos = 20
+    num_demos = 100
     demos_collected = 0
-  
+
+    # open_loop_actions = []
+    # for dir in os.scandir("/home/edward/projects/gym-lowcostrobot/examples/demos"):
+    #     if dir.is_file() and dir.name.endswith('.npz'):
+    #         demo_actions = np.load(dir.path)['action']
+    #         open_loop_actions.append(demo_actions)
+
     while demos_collected < num_demos:
         ep_dict = defaultdict(list)
         obs, info = env.reset()
-        for k, v in obs.items():
-            ep_dict['obs/' + k].append(v)
         
         print("Clean up the environment.")
         # Here, we would give the user some time to clean up the environment and the robot. 
@@ -143,14 +149,14 @@ def collect_demos(args):
                 for i in range(len(joint_commands)):
                     joint_commands[i] = axis_direction[i] * \
                         (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-                joint_commands[0] = 0.0 # disable movement along joint1
-
-                ret = env.step(joint_commands)
+                obs, rew, terminated, truncated, info = env.step(joint_commands)
                 current_time = time.time()
                 pbar.update(current_time - last_time)
                 last_time = current_time
 
         input(f"Demo {demos_collected + 1}/{num_demos}, Press Enter to start the collection.")
+        for k, v in obs.items():
+            ep_dict['obs/' + k].append(v)
 
         for timestep in trange(demo_length, desc="Collecting demo"):
             start_time = time.time()
@@ -161,13 +167,13 @@ def collect_demos(args):
             for i in range(len(joint_commands)):
                 joint_commands[i] = axis_direction[i] * \
                     (positions[i] - start_pos[i]) * counts_to_radians + offsets[i]
-            joint_commands[0] = 0.0 # disable movement along joint1
+            # joint_commands = open_loop_actions[demos_collected][timestep]
 
             ep_dict['action'].append(np.asarray(joint_commands, dtype=np.float32))
             
             obs, rew, terminated, truncated, info = env.step(joint_commands)
             print("REWARD", rew)
-            print("CUBE POS", obs['cube_pos'])
+            # print("CUBE POS", obs['cube_pos'])
             
             # doesn't work on mac
             # img = obs['image_top']
@@ -183,17 +189,20 @@ def collect_demos(args):
             ep_dict['truncated'].append(truncated)
             for k, v in info.items():
                 ep_dict['info/' + k].append(v)
+
+            if terminated:
+                break
         
         save_demo = input("Save the demo? enter y/n")
         if save_demo.lower() == 'y':
             demos_collected += 1
-            demo_path = os.path.join(demo_folder, f'demo_{demos_collected}.npz')
+            demo_path = os.path.join(demo_folder, f'{session_uuid}_{demos_collected}.npz')
             np.savez_compressed(demo_path, **ep_dict)
         else:
             print("Demo not saved.")
 
-        for key in ep_dict:
-            print(key, ep_dict[key][0])
+        # for key in ep_dict:
+        #     print(key, ep_dict[key][0])
 
 
 if __name__ == "__main__":
@@ -203,5 +212,5 @@ if __name__ == "__main__":
     parser.add_argument('--demo_folder', type=str, default='demos', help='Specify the local folder to save demos to')
     args = parser.parse_args()
 
-    # do_sim(args)
-    collect_demos(args)
+    do_sim(args)
+    # collect_demos(args)

@@ -76,7 +76,7 @@ class LiftCubeCameraEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 200}
 
-    def __init__(self, observation_mode="image", action_mode="joint", render_mode=None):
+    def __init__(self, observation_mode="image", action_mode="joint", render_mode=None, render_obs=True):
         # Load the MuJoCo model and data
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
         self.data = mujoco.MjData(self.model)
@@ -96,32 +96,38 @@ class LiftCubeCameraEnv(Env):
         }
         if self.observation_mode in ["image", "both"]:
             observation_subspaces["image_front"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
-            observation_subspaces["image_top"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
-            observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
-            self.renderer = mujoco.Renderer(self.model)
+            # observation_subspaces["image_top"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
+            # observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
+            self.renderer = mujoco.Renderer(self.model, height=256, width=256)
         if self.observation_mode in ["state", "both"]:
             observation_subspaces["cube_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
-            observation_subspaces["ee_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
+        observation_subspaces["ee_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
         self.observation_space = gym.spaces.Dict(observation_subspaces)
 
         # Set the render utilities
+        self.render_obs = render_obs
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
         if self.render_mode == "human":
             self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
             self.viewer.cam.azimuth = -75
             self.viewer.cam.distance = 1
+            self.rgb_array_renderer = mujoco.Renderer(self.model, height=84, width=84)
         elif self.render_mode == "rgb_array":
-            self.rgb_array_renderer = mujoco.Renderer(self.model, height=640, width=640)
+            self.rgb_array_renderer = mujoco.Renderer(self.model, height=84, width=84)
 
         # Set additional utils
         self.threshold_height = 0.08
         # self.cube_low = np.array([-0.15, 0.10, 0.015])
         # self.cube_high = np.array([0.15, 0.25, 0.015])
+
         # self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
         # self.cube_high = np.array([0.1, 0.17, 0.015])
-        self.cube_low = np.array([-0.001, 0.150, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.001, 0.154, 0.015])
+
+        # self.cube_low = np.array([-0.001, 0.150, 0.015])  # move the cube closer to the robot
+        # self.cube_high = np.array([0.001, 0.154, 0.015])
+        self.cube_low = np.array([-0.02, 0.13, 0.015])  # move the cube closer to the robot
+        self.cube_high = np.array([0.02, 0.16, 0.015])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -232,12 +238,16 @@ class LiftCubeCameraEnv(Env):
             "ee_pos":   self.data.xpos[ee_id].astype(np.float32),
         }
         if self.observation_mode in ["image", "both"]:
-            self.renderer.update_scene(self.data, camera="camera_front")
-            observation["image_front"] = self.renderer.render()
-            self.renderer.update_scene(self.data, camera="camera_top")
-            observation["image_top"] = self.renderer.render()
-            self.renderer.update_scene(self.data, camera="camera_wrist")
-            observation["image_wrist"] = self.renderer.render()
+            if self.render_obs:
+                self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
+                observation["image_front"] = self.rgb_array_renderer.render()
+            else:
+                observation["image_front"] = np.zeros((240, 320, 3), dtype=np.uint8)
+
+            # self.rgb_array_renderer.update_scene(self.data, camera="camera_top")
+            # observation["image_top"] = self.rgb_array_renderer.render()
+            # self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
+            # observation["image_wrist"] = self.rgb_array_renderer.render()
         if self.observation_mode in ["state", "both"]:
             observation["cube_pos"] = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3].astype(np.float32)
             observation["ee_pos"] = self.get_ee_pos().astype(np.float32)
@@ -250,11 +260,11 @@ class LiftCubeCameraEnv(Env):
         # Reset the robot to the initial position and sample the cube position
         cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
         cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
-        # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         # Set a better resting position initially
-        robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
-            1.64550541e+00, -1.30162992e+00])
+        # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
+        #     1.64550541e+00, -1.30162992e+00])
 
         self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
         self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
@@ -298,7 +308,7 @@ class LiftCubeCameraEnv(Env):
         # Add image for rendering even when actual observation image is zeroed
         info["image_front"] = observation["image_front"]
 
-        return observation, reward_binary, False, False, info
+        return observation, reward_binary, bool(reward_binary), False, info
 
 
     def render(self):
@@ -306,25 +316,20 @@ class LiftCubeCameraEnv(Env):
             self.viewer.sync()
         elif self.render_mode == "rgb_array":
             # self.rgb_array_renderer.update_scene(self.data, camera="camera_vizu")
-            self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
-            return self.rgb_array_renderer.render()
+            self.renderer.update_scene(self.data, camera="camera_front")
+            return self.renderer.render()
 
     def close(self):
-        if self.render_mode == "human":
-            self.viewer.close()
-        if self.observation_mode in ["image", "both"]:
-            self.renderer.close()
-        if self.render_mode == "rgb_array":
-            self.rgb_array_renderer.close()
+        for renderer in ["viewer", "renderer", "rgb_array_renderer"]:
+            if hasattr(self, renderer):
+                getattr(self, renderer).close()
     
     def get_ee_pos(self):
         ee_id = self.model.site("end_effector").id
         ee_pos = np.array([0.0, 0.0, 0.0, 0.0])
         ee_pos[:3] = self.data.site_xpos[ee_id]
         ee_pos[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
-        # TODO: For now, I hardcoded to only return the y and z coordinates of EE pos. Later, delete [1:3] 
-        # for tasks with lateral motion.
-        return ee_pos[1:3].copy()
+        return ee_pos.copy()
 
     def get_cube_pos(self):
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
