@@ -6,7 +6,7 @@ import os
 import torch
 import torchvision.transforms.functional as F
 
-demo_folder = "/home/edward/projects/gym-lowcostrobot/demos/terminate_demos"
+demo_folder = "/home/edward/projects/gym-lowcostrobot/demos/terminate_demos_50horizon"
 
 demos = {
     'observations': {

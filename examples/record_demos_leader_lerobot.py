@@ -16,6 +16,10 @@ from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
 from low_cost_robot.robot import Robot
 from low_cost_robot.dynamixel import Dynamixel
 
+def busy_wait(dt):   
+    current_time = time.time()
+    while (time.time() < current_time+dt):
+        pass
 
 def do_sim(args):
     """Tele-op method, use for debugging"""
@@ -53,9 +57,12 @@ def do_sim(args):
     env.reset()
     rewards = []
     timesteps = []
-  
+
+
+    step_budget_seconds = 0.1 # the total time each step should take.
     # Main tele-operation loop
     while env.unwrapped.viewer.is_running():
+        step_start = time.time()
         # Read current joint positions
         positions = leader_arm.read("Present_Position")
         # Make sure joint commands = number of positions
@@ -74,14 +81,21 @@ def do_sim(args):
         # send joint commands to simulated environment
         obs, rew, terminated, truncated, info = env.step(joint_commands)
         # print("REWARD", rew)
-        print("CUBE POS", obs['cube_pos'])
+        # print("CUBE POS", obs['cube_pos'])
 
         # record rewards, timesteps
         rewards.append(rew)
         timesteps.append(env.unwrapped.data.time)
+        print(f'steps: {len(timesteps)}\r', end='')
+
+        step_end = time.time() - step_start
+        remaining_time = step_budget_seconds - step_end
+        if remaining_time > 0:
+            # busy wait for the remaining time
+            busy_wait(remaining_time)
+        else:
+            print(f"Step took {step_end} seconds.")
             
-    plt.plot(timesteps, rewards)
-    plt.show()
 
 
 def collect_demos(args):
@@ -122,7 +136,7 @@ def collect_demos(args):
     if not os.path.exists(demo_folder):
         os.makedirs(demo_folder)
     
-    demo_length = 1000 # in steps
+    demo_length = 50 # in steps
     reset_seconds = 0.5 # in seconds
     num_demos = 100
     demos_collected = 0
@@ -158,8 +172,9 @@ def collect_demos(args):
         for k, v in obs.items():
             ep_dict['obs/' + k].append(v)
 
+        step_budget_seconds = 0.1 # the total time each step should take.
         for timestep in trange(demo_length, desc="Collecting demo"):
-            start_time = time.time()
+            step_start = time.time()
             positions = leader_arm.read("Present_Position")
             joint_commands = [0] * len(positions)
 
@@ -172,7 +187,7 @@ def collect_demos(args):
             ep_dict['action'].append(np.asarray(joint_commands, dtype=np.float32))
             
             obs, rew, terminated, truncated, info = env.step(joint_commands)
-            print("REWARD", rew)
+            # print("REWARD", rew)
             # print("CUBE POS", obs['cube_pos'])
             
             # doesn't work on mac
@@ -189,6 +204,13 @@ def collect_demos(args):
             ep_dict['truncated'].append(truncated)
             for k, v in info.items():
                 ep_dict['info/' + k].append(v)
+            step_end = time.time() - step_start
+            remaining_time = step_budget_seconds - step_end
+            print(f'step: {timestep}, rew: {rew} \r', end='')
+            if remaining_time > 0:
+                busy_wait(remaining_time)
+            else:
+                print(f"Step {timestep} took {step_end} seconds.")
 
             if terminated:
                 break
@@ -212,5 +234,5 @@ if __name__ == "__main__":
     parser.add_argument('--demo_folder', type=str, default='demos', help='Specify the local folder to save demos to')
     args = parser.parse_args()
 
-    do_sim(args)
-    # collect_demos(args)
+    # do_sim(args)
+    collect_demos(args)

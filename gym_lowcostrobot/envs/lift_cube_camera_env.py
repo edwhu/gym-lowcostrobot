@@ -137,7 +137,7 @@ class LiftCubeCameraEnv(Env):
         if self.arm_dof_id != 0:
             self.arm_dof_id = self.arm_dof_vel_id + 1
 
-        self.control_decimation = 4 # number of simulation steps per control step
+        self.control_decimation = 40 # number of simulation steps per control step
 
 
     def inverse_kinematics(self, ee_target_pos, step=0.2, joint_name="end_effector", nb_dof=6, regularization=1e-6):
@@ -223,10 +223,13 @@ class LiftCubeCameraEnv(Env):
         self.data.ctrl = target_qpos
 
         # Step the simulation forward
-        for _ in range(self.control_decimation):
-            mujoco.mj_step(self.model, self.data)
-            if self.render_mode == "human":
-                self.viewer.sync()
+        # for _ in range(self.control_decimation):
+        #     mujoco.mj_step(self.model, self.data)
+        #     if self.render_mode == "human":
+        #         self.viewer.sync()
+        mujoco.mj_step(self.model, self.data, self.control_decimation)
+        if self.render_mode == "human":
+            self.viewer.sync()
 
     def get_observation(self):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
