@@ -280,6 +280,12 @@ class PushCubeSimpleEnv(Env):
         # reward = -cube_to_target
         reward = cube_to_target < 0.02
 
+        # TODO: Test out a -1, 100 reward for the environment!!!
+        if reward == 0:
+            reward = -1
+        else:
+            reward = 100
+
         info = {}
         info["image_front"] = observation["image_front"]
         return observation, reward, False, False, info

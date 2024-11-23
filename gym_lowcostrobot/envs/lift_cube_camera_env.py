@@ -290,6 +290,11 @@ class LiftCubeCameraEnv(Env):
         # New binary reward: lifting cube beyond a height
         reward_binary = float(cube_z >= self.threshold_height)
 
+        if reward == 0:
+            reward = -1
+        else:
+            reward = 100
+
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
         ee_id = self.model.site("end_effector").id
