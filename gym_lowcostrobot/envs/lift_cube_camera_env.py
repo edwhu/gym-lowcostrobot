@@ -5,6 +5,7 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 from gymnasium import Env, spaces
+from collections import deque
 
 from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
 
@@ -95,9 +96,9 @@ class LiftCubeCameraEnv(Env):
             "arm_qvel": spaces.Box(low=-10.0, high=10.0, shape=(6,)),
         }
         if self.observation_mode in ["image", "both"]:
-            observation_subspaces["image_front"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
+            # observation_subspaces["image_front"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
             # observation_subspaces["image_top"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
-            # observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
+            observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
         if self.observation_mode in ["state", "both"]:
             observation_subspaces["cube_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
@@ -117,7 +118,7 @@ class LiftCubeCameraEnv(Env):
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=84, width=84)
 
         # Set additional utils
-        self.threshold_height = 0.08
+        self.threshold_height = 0.1
         # self.cube_low = np.array([-0.15, 0.10, 0.015])
         # self.cube_high = np.array([0.15, 0.25, 0.015])
 
@@ -138,7 +139,7 @@ class LiftCubeCameraEnv(Env):
             self.arm_dof_id = self.arm_dof_vel_id + 1
 
         self.control_decimation = 40 # number of simulation steps per control step
-
+        self.frames = deque(maxlen=3)
 
     def inverse_kinematics(self, ee_target_pos, step=0.2, joint_name="end_effector", nb_dof=6, regularization=1e-6):
         """
@@ -242,10 +243,23 @@ class LiftCubeCameraEnv(Env):
         }
         if self.observation_mode in ["image", "both"]:
             if self.render_obs:
-                self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
-                observation["image_front"] = self.rgb_array_renderer.render()
+                # self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
+                # observation["image_front"] = self.rgb_array_renderer.render()
+                self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
+                wrist_img = self.rgb_array_renderer.render()
+                # convert rgb to grayscale
+                wrist_img = np.dot(wrist_img[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
             else:
-                observation["image_front"] = np.zeros((240, 320, 3), dtype=np.uint8)
+                # observation["image_front"] = np.zeros((84, 84, 3), dtype=np.uint8)
+                wrist_img = np.zeros((84, 84), dtype=np.uint8)
+            if len(self.frames) == 0:
+                self.frames.append(wrist_img)
+                self.frames.append(wrist_img)
+
+            self.frames.append(wrist_img)
+            # stack the frames together into 84,84,3
+            wrist_frames = np.stack(self.frames, axis=-1)
+            observation["image_wrist"] = wrist_frames
 
             # self.rgb_array_renderer.update_scene(self.data, camera="camera_top")
             # observation["image_top"] = self.rgb_array_renderer.render()
@@ -271,12 +285,16 @@ class LiftCubeCameraEnv(Env):
 
         self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
         self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
+        self.data.qvel[:] = 0
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
+
+        self.frames.clear()
         
         observation = self.get_observation()
-        info = {'image_front': observation['image_front']}
+        # info = {'image_front': observation['image_front']}
+        info = {'qpos': self.data.qpos.copy()}
         return observation, info
 
     def step(self, action):
@@ -299,7 +317,7 @@ class LiftCubeCameraEnv(Env):
         reward = reward_height + reward_distance
 
         # New binary reward: lifting cube beyond a height
-        reward_binary = float(cube_z >= self.threshold_height)
+        reward_binary = float(cube_z >= self.threshold_height) and float(ee_to_cube < 0.05)
 
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
@@ -308,8 +326,9 @@ class LiftCubeCameraEnv(Env):
         action_ee[:3] = self.data.site_xpos[ee_id]
         action_ee[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
         info["action_ee"] = action_ee
+        info['qpos'] = self.data.qpos.copy()
         # Add image for rendering even when actual observation image is zeroed
-        info["image_front"] = observation["image_front"]
+        # info["image_front"] = observation["image_front"]
 
         return observation, reward_binary, bool(reward_binary), False, info
 
@@ -337,3 +356,12 @@ class LiftCubeCameraEnv(Env):
     def get_cube_pos(self):
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
         return cube_pos.copy()
+
+if __name__ == "__main__":
+    env = LiftCubeCameraEnv(render_mode="rgb_array")
+    env.reset()
+    for _ in range(1000):
+        action = env.action_space.sample()
+        obs, reward, done, info = env.step(action)
+        env.render()
+    env.close()

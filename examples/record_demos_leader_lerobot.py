@@ -86,7 +86,7 @@ def do_sim(args):
         # record rewards, timesteps
         rewards.append(rew)
         timesteps.append(env.unwrapped.data.time)
-        print(f'steps: {len(timesteps)}\r', end='')
+        print(f'steps: {len(timesteps)}, rew: {rew}', end='\r')
 
         step_end = time.time() - step_start
         remaining_time = step_budget_seconds - step_end
@@ -223,9 +223,40 @@ def collect_demos(args):
         else:
             print("Demo not saved.")
 
-        # for key in ep_dict:
-        #     print(key, ep_dict[key][0])
 
+def replay_sim(args):
+    """Read in demos and set the simulator state"""
+    env = gym.make(args.env_name, render_mode="human", observation_mode="both", action_mode="joint")
+    
+    env.reset()
+    viewer = env.unwrapped.viewer
+
+
+    for dir in os.scandir("/home/edward/projects/gym-lowcostrobot/demos/terminate_demos_50horizon"):
+        if dir.is_file() and dir.name.endswith('.npz'):
+            demo = np.load(dir.path)
+            break
+
+    while viewer.is_running():
+        model = env.unwrapped.model 
+        data = env.unwrapped.data
+        arm_qpos = demo['obs/arm_qpos']
+        cube_pos = demo['obs/cube_pos']
+
+        step_budget_seconds = 0.1 # the total time each step should take.
+        for i in range(arm_qpos.shape[0]):
+            step_start = time.time()
+            qpos= np.concatenate([arm_qpos[i], cube_pos[i], [1, 0, 0, 0]])
+            data.qpos[:] = qpos
+            mujoco.mj_forward(model, data)
+            viewer.sync()
+            step_end = time.time() - step_start
+            remaining_time = step_budget_seconds - step_end
+            if remaining_time > 0:
+                busy_wait(remaining_time)
+            else:
+                print(f"Step {i} took {step_end} seconds.")
+            
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Choose between 5dof and 6dof lowcost robot simulation.")
@@ -236,3 +267,4 @@ if __name__ == "__main__":
 
     # do_sim(args)
     collect_demos(args)
+    # replay_sim(args)

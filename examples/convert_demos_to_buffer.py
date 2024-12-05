@@ -5,8 +5,9 @@ import numpy as np
 import os
 import torch
 import torchvision.transforms.functional as F
+from collections import deque
 
-demo_folder = "/home/edward/projects/gym-lowcostrobot/demos/terminate_demos_50horizon"
+demo_folder = "/home/edward/projects/gym-lowcostrobot/demos/terminate_demos_50horizon_wrist"
 
 demos = {
     'observations': {
@@ -28,9 +29,21 @@ for entry in os.scandir(demo_folder):
     if entry.is_file() and entry.name.endswith('.npz'):
         print(entry.name)
         demo = np.load(entry.path)
-        rgb = torch.from_numpy(demo['obs/image_front'].transpose(0,3,1,2))
-        # resized_rgb = F.resize(rgb, size=(84,84)).numpy().transpose(0,2,3,1)
-        resized_rgb = rgb.numpy().transpose(0,2,3,1)
+        rgb = torch.from_numpy(demo['obs/image_wrist'].transpose(0,3,1,2))
+        resized_rgb = rgb.numpy().transpose(0,2,3,1) # (T, H, W, C)
+        # do framestacking, so that we transform (T,H,W,C) to (T,H,W,C * Frame stack)
+        num_frames = 2
+        frames = deque(maxlen=num_frames)
+        framestacked_rgb = np.ones((resized_rgb.shape[0], resized_rgb.shape[1], resized_rgb.shape[2], 3), dtype=np.uint8)
+        for _ in range(num_frames-1):
+            frames.append(resized_rgb[0])
+        
+        for t in range(resized_rgb.shape[0]):
+            frames.append(resized_rgb[t])
+            _all_6_frames = np.concat(frames, axis=-1)
+            framestacked_rgb[t] = _all_6_frames[:, :, 1::2]
+
+        resized_rgb = framestacked_rgb
         demos['observations']['rgb'].append(resized_rgb[:-1])
         demos['next_observations']['rgb'].append(resized_rgb[1:])
 

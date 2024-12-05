@@ -82,7 +82,8 @@
               <geom mesh="link_4_collision" class="collision"/>
 
               <!-- Adding camera_wrist here -->
-              <camera name="camera_wrist" pos="-0.08 0 0" euler="1.57 1.57 0" mode="fixed"/>
+              <!-- <camera name="camera_wrist" pos="-0.08 0 0" euler="1.57 1.57 0" mode="fixed" fovy="60"/> -->
+              <camera name="camera_wrist" pos="-0.02 0.02 0.02" euler="1.57 1.57 0" mode="fixed" fovy="80"/>
               <!-- Add a red dot at the camera's position -->
               <!-- <geom name="camera_dot" type="sphere" pos="-0.08 0 0" size="0.01" rgba="1 0 0 1"/> -->
 
