@@ -1,6 +1,11 @@
 # Edward's modifications
 * updated teleoperate_leader_lerobot.py to work with our leader arm. 
 
+## Data collection for Koch
+1. Run `record_demos_leader_lerobot.py` to record demonstrations.
+2. Run `convert_demos_to_episodic_buffer.py` to create a buffer file.
+3. Move the buffer file to the data folder in `fowm` for policy training.  
+
 # Gym Low Cost Robot
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
