@@ -339,7 +339,12 @@ class LiftCubeCameraEnv(Env):
         elif self.render_mode == "rgb_array":
             # self.rgb_array_renderer.update_scene(self.data, camera="camera_vizu")
             self.renderer.update_scene(self.data, camera="camera_front")
-            return self.renderer.render()
+            front_img = self.renderer.render()
+            self.renderer.update_scene(self.data, camera="camera_wrist")
+            wrist_img = self.renderer.render()
+            # concatenate the images.
+            combined_img = np.concatenate([wrist_img, front_img], 1)
+            return combined_img
 
     def close(self):
         for renderer in ["viewer", "renderer", "rgb_array_renderer"]:
