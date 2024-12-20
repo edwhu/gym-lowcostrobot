@@ -136,7 +136,7 @@ def collect_demos(args):
     if not os.path.exists(demo_folder):
         os.makedirs(demo_folder)
     
-    demo_length = 50 # in steps
+    demo_length = 500 # in steps
     reset_seconds = 0.5 # in seconds
     num_demos = 100
     demos_collected = 0
@@ -256,6 +256,32 @@ def replay_sim(args):
                 busy_wait(remaining_time)
             else:
                 print(f"Step {i} took {step_end} seconds.")
+
+def render_sim(args):
+    """Read in demos and set the simulator state"""
+    import imageio
+    env = gym.make(args.env_name, render_mode="rgb_array", observation_mode="both", action_mode="joint")
+    
+    env.reset()
+
+    for dir in os.scandir("/home/edward/projects/gym-lowcostrobot/demos/terminate_demos_50horizon_wrist"):
+        if dir.is_file() and dir.name.endswith('.npz'):
+            demo = np.load(dir.path)
+
+        model = env.unwrapped.model 
+        data = env.unwrapped.data
+        arm_qpos = demo['obs/arm_qpos']
+        cube_pos = demo['obs/cube_pos']
+
+        video = []
+        for i in range(arm_qpos.shape[0]):
+            step_start = time.time()
+            qpos= np.concatenate([arm_qpos[i], cube_pos[i], [1, 0, 0, 0]])
+            data.qpos[:] = qpos
+            mujoco.mj_forward(model, data)
+            img = env.render()
+            video.append(img)
+        imageio.mimsave(f'demo_{i}.mp4', video, fps=10)
             
 
 if __name__ == "__main__":
@@ -267,4 +293,5 @@ if __name__ == "__main__":
 
     # do_sim(args)
     collect_demos(args)
+    # render_sim(args)
     # replay_sim(args)
