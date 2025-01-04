@@ -273,19 +273,23 @@ class LiftCubeCameraEnv(Env):
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed, options=options)
+        
+        if options is None:
+            # Reset the robot to the initial position and sample the cube position
+            cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
+            cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
+            robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-        # Reset the robot to the initial position and sample the cube position
-        cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
-        cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
-        robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            # Set a better resting position initially
+            # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
+            #     1.64550541e+00, -1.30162992e+00])
 
-        # Set a better resting position initially
-        # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
-        #     1.64550541e+00, -1.30162992e+00])
-
-        self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
-        self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
-        self.data.qvel[:] = 0
+            self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
+            self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
+            self.data.qvel[:] = 0
+        else:
+            self.data.qpos = options["qpos"].copy()
+            self.data.qvel = options["qvel"].copy()
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
