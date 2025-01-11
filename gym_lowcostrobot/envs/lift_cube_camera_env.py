@@ -82,9 +82,20 @@ class LiftCubeCameraEnv(Env):
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
         self.data = mujoco.MjData(self.model)
 
+        # Enable gravity compensation. Set to 0.0 to disable.
+        gravity_compensation = True
+        for body in ["base_link", "link_1", "link_2", "link_3", "link_4", "link_5", "link_6"]:
+            body_id = self.model.body(body).id
+            self.model.body_gravcomp[body_id] = float(gravity_compensation)
+
+
+        self.model.body_gravcomp[:] = float(gravity_compensation)
+        # self.dt: float = 0.002
+        # self.model.opt.timestep = self.dt
+
         # Set the action space
         self.action_mode = action_mode
-        action_shape = {"joint": 6, "ee": 4}[action_mode]
+        action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
 
         self.nb_dof = 6
@@ -188,6 +199,48 @@ class LiftCubeCameraEnv(Env):
 
         return q_target_pos
 
+    def diffik_nullspace(
+        self,
+        goal_pos,
+        goal_quat,
+        site_id,
+    ):
+        model = self.model
+        data = self.data
+        # Spatial velocity (aka twist).
+        # dx = data.mocap_pos[mocap_id] - data.site(site_id).xpos
+        dx = goal_pos - data.site(site_id).xpos
+        self.twist[:3] = self.Kpos * dx / self.integration_dt
+        mujoco.mju_mat2Quat(self.site_quat, data.site(site_id).xmat)
+        mujoco.mju_negQuat(self.site_quat_conj, self.site_quat)
+        # mujoco.mju_mulQuat(error_quat, data.mocap_quat[mocap_id], site_quat_conj)
+        mujoco.mju_mulQuat(self.error_quat, goal_quat, self.site_quat_conj)
+        mujoco.mju_quat2Vel(self.twist[3:], self.error_quat, 1.0)
+        self.twist[3:] *= self.Kori / self.integration_dt
+
+        # Jacobian.
+        temp_jac = np.zeros((6, model.nv))
+        mujoco.mj_jacSite(model, data, temp_jac[:3], temp_jac[3:], site_id)
+        self.jac = temp_jac[:, self.dof_ids]
+
+        # Damped least squares.
+        dq = self.jac.T @ np.linalg.solve(self.jac @ self.jac.T + self.diag, self.twist)
+
+        # Nullspace control biasing joint velocities towards the home configuration.
+        dq += (self.eye - np.linalg.pinv(self.jac) @ self.jac) @ (self.Kn * (self.q0 - data.qpos[self.dof_ids]))
+
+        # Clamp maximum joint velocity.
+        dq_abs_max = np.abs(dq).max()
+        if dq_abs_max > self.max_angvel:
+            dq *= self.max_angvel / dq_abs_max
+        # Integrate joint velocities to obtain joint positions.
+        temp_dq = np.concatenate([dq, np.zeros(6)])
+        q = data.qpos.copy()  # Note the copy here is important.
+        mujoco.mj_integratePos(model, q, temp_dq, self.integration_dt)
+        q =  q[self.dof_ids]
+        np.clip(q, *model.jnt_range[self.dof_ids].T, out=q)
+        return q
+
     def apply_action(self, action):
         """
         Step the simulation forward based on the action
@@ -199,6 +252,7 @@ class LiftCubeCameraEnv(Env):
         if self.action_mode == "ee":
             if len(action) == 4:
                 # raise NotImplementedError("EE mode not implemented yet")
+                # import ipdb; ipdb.set_trace()
                 ee_action, gripper_action = action[:3], action[-1]
 
                 # Update the robot position based on the action
@@ -213,6 +267,23 @@ class LiftCubeCameraEnv(Env):
                 target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
                 target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
                 target_qpos = np.array(action).clip(target_low, target_high)
+        elif self.action_mode == "nullspace":
+                # import ipdb; ipdb.set_trace()
+                ee_action, gripper_action = action[:3], action[-1]
+                goal_pos = ee_action
+                goal_quat = np.array([0.5, 0.5, 0.5, 0.5])
+                site_id = self.model.site("attachment_site").id
+
+                # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
+                target_qpos = self.diffik_nullspace(
+                    goal_pos,
+                    goal_quat,
+                    site_id,
+                )
+                target_qpos[-1:] = gripper_action
+                # import ipdb; ipdb.set_trace()
+
+
         elif self.action_mode == "joint":
             target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
             target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
@@ -278,18 +349,62 @@ class LiftCubeCameraEnv(Env):
             # Reset the robot to the initial position and sample the cube position
             cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
             cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
-            robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            robot_qpos = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, 0])
 
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
             #     1.64550541e+00, -1.30162992e+00])
-
             self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
             self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
             self.data.qvel[:] = 0
         else:
             self.data.qpos = options["qpos"].copy()
             self.data.qvel = options["qvel"].copy()
+
+        # nullspace action space setup
+        model = self.model
+        joint_names = [
+            "joint_1",
+            "joint_2",
+            "joint_3",
+            "joint_4",
+            "joint_5",
+            "joint_6",
+        ]
+        self.dof_ids = np.array([model.joint(name).id for name in joint_names])
+        self.actuator_ids = np.array([model.actuator(name).id for name in joint_names])
+        self.q0 = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, 0])
+
+        # Integration timestep in seconds. This corresponds to the amount of time the joint
+        # velocities will be integrated for to obtain the desired joint positions.
+        self.integration_dt: float = 0.1
+
+        # Damping term for the pseudoinverse. This is used to prevent joint velocities from
+        # becoming too large when the Jacobian is close to singular.
+        self.damping: float = 1e-4
+
+        # Gains for the twist computation. These should be between 0 and 1. 0 means no
+        # movement, 1 means move the end-effector to the target in one integration step.
+        self.Kpos: float = 0.95
+        self.Kori: float = 0.95
+
+
+        # Nullspace P gain.
+        self.Kn = np.asarray([10.0, 10.0, 10.0, 10.0, 5.0, 0.0])
+        self.Kn /= 100.0
+
+        # Maximum allowable joint velocity in rad/s.
+        self.max_angvel = 0.785
+
+        self.jac = np.zeros((6, 6))
+        self.diag = self.damping * np.eye(6)
+        self.eye = np.eye(6)
+        self.twist = np.zeros(6)
+        self.site_quat = np.zeros(4)
+        self.site_quat_conj = np.zeros(4)
+        self.error_quat = np.zeros(4)
+
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
