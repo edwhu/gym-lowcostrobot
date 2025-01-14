@@ -138,8 +138,10 @@ class LiftCubeCameraEnv(Env):
 
         # self.cube_low = np.array([-0.001, 0.150, 0.015])  # move the cube closer to the robot
         # self.cube_high = np.array([0.001, 0.154, 0.015])
-        self.cube_low = np.array([-0.02, 0.13, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.02, 0.16, 0.015])
+        # self.cube_low = np.array([-0.02, 0.13, 0.015])  # move the cube closer to the robot
+        # self.cube_high = np.array([0.02, 0.16, 0.015])
+        self.cube_low = np.array([-0.15, 0.05, 0.015])  # move the cube closer to the robot
+        self.cube_high = np.array([0.15, 0.16, 0.015])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -268,31 +270,32 @@ class LiftCubeCameraEnv(Env):
                 target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
                 target_qpos = np.array(action).clip(target_low, target_high)
         elif self.action_mode == "nullspace":
-                # import ipdb; ipdb.set_trace()
-                ee_action, gripper_action = action[:3], action[-1]
-                goal_pos = ee_action
-                goal_quat = np.array([0.5, 0.5, 0.5, 0.5])
-                site_id = self.model.site("attachment_site").id
+            # actions are relative.
+            ee_action, gripper_action = action[:3], action[-1]
+            goal_pos = ee_action + self.data.site("attachment_site").xpos
+            goal_quat = np.array([0.5, 0.5, 0.5, 0.5])
+            site_id = self.model.site("attachment_site").id
 
-                # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
-                target_qpos = self.diffik_nullspace(
-                    goal_pos,
-                    goal_quat,
-                    site_id,
-                )
-                target_qpos[-1:] = gripper_action
-                # import ipdb; ipdb.set_trace()
+            # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
+            target_qpos = self.diffik_nullspace(
+                goal_pos,
+                goal_quat,
+                site_id,
+            )
+            target_qpos[-1:] += gripper_action
 
 
         elif self.action_mode == "joint":
-            target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
-            target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
-            target_qpos = np.array(action).clip(target_low, target_high)
+            # target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
+            # target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
+            # target_qpos = np.array(action).clip(target_low, target_high)
+            target_qpos = np.array(action)
         else:
             raise ValueError("Invalid action mode, must be 'ee' or 'joint'")
 
         # Set the target position
         self.data.ctrl = target_qpos
+        info = {"target_qpos": target_qpos}
 
         # Step the simulation forward
         # for _ in range(self.control_decimation):
@@ -302,6 +305,7 @@ class LiftCubeCameraEnv(Env):
         mujoco.mj_step(self.model, self.data, self.control_decimation)
         if self.render_mode == "human":
             self.viewer.sync()
+        return info
 
     def get_observation(self):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
@@ -418,7 +422,7 @@ class LiftCubeCameraEnv(Env):
 
     def step(self, action):
         # Perform the action and step the simulation
-        self.apply_action(action)
+        action_info = self.apply_action(action)
 
         # Get the new observation
         observation = self.get_observation()
@@ -444,8 +448,11 @@ class LiftCubeCameraEnv(Env):
         action_ee = np.array([0.0, 0.0, 0.0, 0.0])
         action_ee[:3] = self.data.site_xpos[ee_id]
         action_ee[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
+
         info["action_ee"] = action_ee
         info['qpos'] = self.data.qpos.copy()
+        info['qvel'] = self.data.qvel.copy()
+        info["target_qpos"] = action_info["target_qpos"]
         # Add image for rendering even when actual observation image is zeroed
         # info["image_front"] = observation["image_front"]
 
