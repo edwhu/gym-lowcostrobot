@@ -29,7 +29,7 @@ pos_action_noise = 0.01
 
 def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info):
     demo['observations']['rgb'].append(obs['image_wrist'])
-    state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], ['cube_pos']], -1)
+    state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], obs['cube_pos']], -1)
     demo['observations']['state'].append(state)
 
     demo['actions'].append(rel_action)
@@ -45,7 +45,7 @@ def collect_episode(demo, env):
     obs, info = env.reset()
 
     demo['observations']['rgb'].append(obs['image_wrist'])
-    state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], ['cube_pos']], -1)
+    state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], obs['cube_pos']], -1)
     demo['observations']['state'].append(state)
 
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
@@ -212,9 +212,9 @@ print('\nfinal demo dataset')
 for k, v in demos.items():
     if isinstance(v, dict):
         for k2, v2 in v.items():
-            print(k, k2, v2.shape)
+            print(k, k2, v2.shape, v2.dtype)
     else:
-        print(k, v.shape)
+        print(k, v.shape, v2.dtype)
 
 # save the statistics into a metadata dict
 metadata = {
