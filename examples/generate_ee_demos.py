@@ -41,7 +41,7 @@ def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, inf
 
     return demo
 
-def collect_episode(demo, env):
+def collect_episode(demo, env, ep):
 
     # while True:
     obs, info = env.reset()
@@ -55,7 +55,7 @@ def collect_episode(demo, env):
     # first go up to middle of the workspace so everything is in the field of view.
     desired_pos = np.array([0, 0.07, 0.13])
     action = np.array([*desired_pos, -1])
-    while np.linalg.norm(obs['ee_pos'][:3] - desired_pos) > 0.01:
+    while np.linalg.norm(obs['ee_pos'][:3][-1] - desired_pos[-1]) > 0.02:
         noise = np.random.normal(0, pos_action_noise, size=3)
         rel_action = action - obs['ee_pos']
         rel_action[:3] += noise
@@ -76,8 +76,6 @@ def collect_episode(demo, env):
             break
     if term or trunc:
         return demo
-
-
 
 
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
@@ -190,7 +188,7 @@ for ep in range(100):
     # desired_pos = goals[ep]
     demo = deepcopy(demo_dict)
     # while True:
-    demo = collect_episode(demo, env)
+    demo = collect_episode(demo, env, ep)
     for k, v in demo.items():
         if k != 'next_observations' and isinstance(v, dict):
             for k2, v2 in v.items():
@@ -265,7 +263,7 @@ print('\nstatistics:')
 for k, v in metadata.items():
     print(k, v)
 
-imageio.mimwrite('demos.mp4', demos['observations']['rgb'][:1000], fps=len(demos['observations']['rgb'])//10)
+imageio.mimwrite('demos.mp4', demos['observations']['rgb'][:1000], fps=10)
 # store as a pickle file.
 import pickle 
 with open('buffer.pkl', 'wb') as f:
