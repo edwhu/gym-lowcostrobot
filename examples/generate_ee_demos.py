@@ -25,7 +25,7 @@ demo_dict = {
     'dones': [],
 }
 
-pos_action_noise = 0.01
+pos_action_noise = 0.0001
 
 def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info):
     demo['observations']['rgb'].append(obs['image_wrist'])
@@ -42,11 +42,43 @@ def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, inf
     return demo
 
 def collect_episode(demo, env):
+
+    # while True:
     obs, info = env.reset()
+        # env.render()
 
     demo['observations']['rgb'].append(obs['image_wrist'])
     state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], obs['cube_pos']], -1)
     demo['observations']['state'].append(state)
+
+    i = 0
+    # first go up to middle of the workspace so everything is in the field of view.
+    desired_pos = np.array([0, 0.07, 0.13])
+    action = np.array([*desired_pos, -1])
+    while np.linalg.norm(obs['ee_pos'][:3] - desired_pos) > 0.01:
+        noise = np.random.normal(0, pos_action_noise, size=3)
+        rel_action = action - obs['ee_pos']
+        rel_action[:3] += noise
+        abs_action = action.copy()
+        abs_action[:3] += noise
+
+        obs, reward, term, trunc, info = env.step(rel_action)
+        demo = store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info)
+
+        # print(f"desired ee: {desired_pos}")
+        # print(f't:{i+1}', 'ee', obs['ee_pos'], end='\n')
+        i += 1
+        if term:
+            print(f'ep {ep} terminated with {i} actions')
+            break
+        if trunc:
+            print(f'ep {ep} truncated with {i} actions')
+            break
+    if term or trunc:
+        return demo
+
+
+
 
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
     pos_diff = np.array([0.02, 0, 0.025])
@@ -54,7 +86,6 @@ def collect_episode(demo, env):
     action = np.array([*desired_pos, -1])
 
     # go right over the box.
-    i = 0
     while np.linalg.norm(obs['ee_pos'][:3] - desired_pos) > 0.01:
         noise = np.random.normal(0, pos_action_noise, size=3)
         rel_action = action - obs['ee_pos']
@@ -158,6 +189,7 @@ demos = deepcopy(demo_dict)
 for ep in range(100):
     # desired_pos = goals[ep]
     demo = deepcopy(demo_dict)
+    # while True:
     demo = collect_episode(demo, env)
     for k, v in demo.items():
         if k != 'next_observations' and isinstance(v, dict):
@@ -233,7 +265,7 @@ print('\nstatistics:')
 for k, v in metadata.items():
     print(k, v)
 
-imageio.mimwrite('demos.mp4', demos['observations']['rgb'][:1000], fps=100)
+imageio.mimwrite('demos.mp4', demos['observations']['rgb'][:1000], fps=len(demos['observations']['rgb'])//10)
 # store as a pickle file.
 import pickle 
 with open('buffer.pkl', 'wb') as f:
