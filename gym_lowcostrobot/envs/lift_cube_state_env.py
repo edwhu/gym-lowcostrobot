@@ -10,7 +10,7 @@ from collections import deque
 from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
 
 
-class LiftCubeCameraEnv(Env):
+class LiftCubeStateEnv(Env):
     """
     ## Description
 
@@ -77,7 +77,7 @@ class LiftCubeCameraEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 200}
 
-    def __init__(self, observation_mode="image", action_mode="joint", render_mode=None, render_obs=True):
+    def __init__(self, observation_mode="state", action_mode="joint", render_mode=None, render_obs=True):
         # Load the MuJoCo model and data
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
         self.data = mujoco.MjData(self.model)
@@ -103,17 +103,17 @@ class LiftCubeCameraEnv(Env):
         # Set the observations space
         self.observation_mode = observation_mode
         observation_subspaces = {
+            "qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(13,)),
+            "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(12,)),
+            "touch": spaces.Box(low=-10.0, high=10.0, shape=(3,)),
             "arm_qpos": spaces.Box(low=-np.pi, high=np.pi, shape=(6,)),
-            "arm_qvel": spaces.Box(low=-10.0, high=10.0, shape=(6,)),
         }
+
         if self.observation_mode in ["image", "both"]:
-            # observation_subspaces["image_front"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
-            # observation_subspaces["image_top"] = spaces.Box(0, 255, shape=(240, 320, 3), dtype=np.uint8)
             observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
-        if self.observation_mode in ["state", "both"]:
-            observation_subspaces["cube_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(3,))
-        observation_subspaces["ee_pos"] = spaces.Box(low=-10.0, high=10.0, shape=(4,))
+
+
         self.observation_space = gym.spaces.Dict(observation_subspaces)
 
         # Set the render utilities
@@ -130,16 +130,6 @@ class LiftCubeCameraEnv(Env):
 
         # Set additional utils
         self.threshold_height = 0.1
-        # self.cube_low = np.array([-0.15, 0.10, 0.015])
-        # self.cube_high = np.array([0.15, 0.25, 0.015])
-
-        # self.cube_low = np.array([-0.1, 0.1, 0.015])  # move the cube closer to the robot
-        # self.cube_high = np.array([0.1, 0.17, 0.015])
-
-        # self.cube_low = np.array([-0.001, 0.150, 0.015])  # move the cube closer to the robot
-        # self.cube_high = np.array([0.001, 0.154, 0.015])
-        # self.cube_low = np.array([-0.02, 0.13, 0.015])  # move the cube closer to the robot
-        # self.cube_high = np.array([0.02, 0.16, 0.015])
         self.cube_low = np.array([-0.15, 0.05, 0.015])  # move the cube closer to the robot
         self.cube_high = np.array([0.15, 0.16, 0.015])
 
@@ -310,12 +300,34 @@ class LiftCubeCameraEnv(Env):
     def get_observation(self):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
         # qvel is [vx, vy, vz, wx, wy, wz, dq1, dq2, dq3, dq4, dq5, dq6, dgripper]
-        ee_id = self.model.body("link_6").id
         observation = {
+            "qpos": self.data.qpos.copy(),
+            "qvel": self.data.qvel.copy(),
             "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].astype(np.float32),
-            "arm_qvel": self.data.qvel[self.arm_dof_vel_id:self.arm_dof_vel_id+self.nb_dof].astype(np.float32),
-            "ee_pos":   self.data.xpos[ee_id].astype(np.float32),
         }
+        touch_left_finger = False
+        touch_right_finger = False
+        obj = "cube"
+        l_finger_geom_id = self.model.geom("link_6_collision").id
+        r_finger_geom_id = self.model.geom("link_5_collision").id
+        for j in range(self.data.ncon):
+            c = self.data.contact[j]
+            body1 = self.model.geom_bodyid[c.geom1]
+            body2 = self.model.geom_bodyid[c.geom2]
+            body1_name = self.model.body(body1).name
+            body2_name = self.model.body(body2).name
+
+            if c.geom1 == l_finger_geom_id and body2_name == obj:
+                touch_left_finger = True
+            if c.geom2 == l_finger_geom_id and body1_name == obj:
+                touch_left_finger = True
+
+            if c.geom1 == r_finger_geom_id and body2_name == obj:
+                touch_right_finger = True
+            if c.geom2 == r_finger_geom_id and body1_name == obj:
+                touch_right_finger = True
+        observation["touch"] = np.array([int(touch_left_finger), int(touch_right_finger)]).astype(np.float32)
+
         if self.observation_mode in ["image", "both"]:
             if self.render_obs:
                 # self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
@@ -336,13 +348,6 @@ class LiftCubeCameraEnv(Env):
             wrist_frames = np.stack(self.frames, axis=-1)
             observation["image_wrist"] = wrist_frames
 
-            # self.rgb_array_renderer.update_scene(self.data, camera="camera_top")
-            # observation["image_top"] = self.rgb_array_renderer.render()
-            # self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
-            # observation["image_wrist"] = self.rgb_array_renderer.render()
-        if self.observation_mode in ["state", "both"]:
-            observation["cube_pos"] = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3].astype(np.float32)
-            observation["ee_pos"] = self.get_ee_pos().astype(np.float32)
         return observation
 
     def reset(self, seed=None, options=None):
@@ -434,13 +439,26 @@ class LiftCubeCameraEnv(Env):
         ee_pos = self.data.site_xpos[ee_id]
         ee_to_cube = np.linalg.norm(ee_pos - cube_pos)
 
-        # Compute the reward
-        reward_height = cube_z - self.threshold_height
-        reward_distance = -ee_to_cube
-        reward = reward_height + reward_distance
+        terminated = cube_z >= self.threshold_height and ee_to_cube < 0.05
+        reward = 0
+        if terminated:
+            msg = "success phase"
+            reward = 300
+        else:
+            dist = ee_to_cube
+            reaching_reward = 1 - np.tanh(10.0 * dist)
+            reward += reaching_reward
+            msg = "reaching phase"
 
-        # New binary reward: lifting cube beyond a height
-        reward_binary = float(cube_z >= self.threshold_height) and float(ee_to_cube < 0.05)
+            # grasping reward
+            if observation["touch"].all():
+                reward += 0.25
+                dist = np.abs(cube_z - self.threshold_height)
+                picking_reward = 1 - np.tanh(10.0 * dist)
+                reward += picking_reward
+                msg = "picking phase"
+
+        # print(f"{msg}: {reward}")
 
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
@@ -450,13 +468,11 @@ class LiftCubeCameraEnv(Env):
         action_ee[-1] = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
 
         info["action_ee"] = action_ee
-        info['qpos'] = self.data.qpos.copy()
-        info['qvel'] = self.data.qvel.copy()
+        info["qpos"] = self.data.qpos.copy()
+        info["qvel"] = self.data.qvel.copy()
         info["target_qpos"] = action_info["target_qpos"]
-        # Add image for rendering even when actual observation image is zeroed
-        # info["image_front"] = observation["image_front"]
 
-        return observation, reward_binary, bool(reward_binary), False, info
+        return observation, reward, terminated, False, info
 
 
     def render(self):
@@ -489,7 +505,7 @@ class LiftCubeCameraEnv(Env):
         return cube_pos.copy()
 
 if __name__ == "__main__":
-    env = LiftCubeCameraEnv(render_mode="rgb_array")
+    env = LiftCubeStateEnv(render_mode="rgb_array")
     env.reset()
     for _ in range(1000):
         action = env.action_space.sample()

@@ -26,6 +26,15 @@ register(
     kwargs={"observation_mode":"both"}
 )
 
+
+# obs space is just low dimensional state
+register(
+    id="LiftCubeState-v0",
+    entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
+    max_episode_steps=70,
+    kwargs={"observation_mode":"state", "action_mode":"nullspace"}
+)
+
 register(
     id="PickPlaceCube-v0",
     entry_point="gym_lowcostrobot.envs:PickPlaceCubeEnv",
