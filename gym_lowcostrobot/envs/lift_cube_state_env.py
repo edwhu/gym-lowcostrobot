@@ -105,7 +105,7 @@ class LiftCubeStateEnv(Env):
         observation_subspaces = {
             "qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(13,)),
             "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(12,)),
-            "touch": spaces.Box(low=-10.0, high=10.0, shape=(3,)),
+            "touch": spaces.Box(low=-10.0, high=10.0, shape=(2,)),
             "arm_qpos": spaces.Box(low=-np.pi, high=np.pi, shape=(6,)),
         }
 
@@ -301,9 +301,9 @@ class LiftCubeStateEnv(Env):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
         # qvel is [vx, vy, vz, wx, wy, wz, dq1, dq2, dq3, dq4, dq5, dq6, dgripper]
         observation = {
-            "qpos": self.data.qpos.copy(),
-            "qvel": self.data.qvel.copy(),
-            "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].astype(np.float32),
+            "qpos": self.data.qpos.copy().astype(np.float32),
+            "qvel": self.data.qvel.copy().astype(np.float32),
+            "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].copy().astype(np.float32),
         }
         touch_left_finger = False
         touch_right_finger = False
