@@ -5,7 +5,7 @@ from copy import deepcopy
 import imageio 
 from collections import deque
 
-np.set_printoptions(precision=2, suppress=True)
+np.set_printoptions(precision=4, suppress=True)
 
 # env = gym.make('LiftCubeStateCameraPrivileged-v0', render_mode="human", observation_mode="both", action_mode="nullspace")
 env = gym.make('LiftCubeState-v0', render_mode="human")
@@ -58,7 +58,7 @@ def collect_episode(demo, env, ep):
     print("Going up")
     # first go up to middle of the workspace so everything is in the field of view.
     desired_pos = np.array([0, 0.07, 0.13])
-    action = np.array([*desired_pos, -1])
+    action = np.array([*desired_pos, -2])
     ee_pos = env.unwrapped.get_ee_pos()
     while np.linalg.norm(ee_pos[:3][-1] - desired_pos[-1]) > 0.02:
         noise = np.random.normal(0, pos_action_noise, size=3)
@@ -66,7 +66,7 @@ def collect_episode(demo, env, ep):
         rel_action[:3] += noise
         abs_action = action.copy()
         abs_action[:3] += noise
-
+        rel_action = env.unwrapped.get_scaled_action(rel_action)
         obs, reward, term, trunc, info = env.step(rel_action)
         ee_pos = env.unwrapped.get_ee_pos()
         demo = store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info)
@@ -100,6 +100,7 @@ def collect_episode(demo, env, ep):
         abs_action = action.copy()
         abs_action[:3] += noise
 
+        rel_action = env.unwrapped.get_scaled_action(rel_action)
         obs, reward, term, trunc, info = env.step(rel_action)
         ee_pos = env.unwrapped.get_ee_pos()
         demo = store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info)
@@ -129,6 +130,7 @@ def collect_episode(demo, env, ep):
         abs_action = action.copy()
         abs_action[:3] += noise
 
+        rel_action = env.unwrapped.get_scaled_action(rel_action)
         obs, reward, term, trunc, info = env.step(rel_action)
         ee_pos = env.unwrapped.get_ee_pos()
         demo = store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info)
@@ -156,6 +158,7 @@ def collect_episode(demo, env, ep):
         abs_action = action.copy()
         abs_action[:3] += noise
 
+        rel_action = env.unwrapped.get_scaled_action(rel_action)
         obs, reward, term, trunc, info = env.step(rel_action)
         ee_pos = env.unwrapped.get_ee_pos()
         demo = store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info)
@@ -183,6 +186,7 @@ def collect_episode(demo, env, ep):
         abs_action = action.copy()
         abs_action[:3] += noise
 
+        rel_action = env.unwrapped.get_scaled_action(rel_action)
         obs, reward, term, trunc, info = env.step(rel_action)
         ee_pos = env.unwrapped.get_ee_pos()
         demo = store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info)
@@ -204,3 +208,4 @@ demos = deepcopy(demo_dict)
 for ep in range(100):
     demo = deepcopy(demo_dict)
     demo = collect_episode(demo, env, ep)
+    import ipdb; ipdb.set_trace()

@@ -97,6 +97,9 @@ class LiftCubeStateEnv(Env):
         self.action_mode = action_mode
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
+        # used for bounding the nullspace controller
+        self.action_min = np.array([-0.1, -0.1, -0.1, -2.0])
+        self.action_max = np.array([0.1, 0.1, 0.1, 11.0])
 
         self.nb_dof = 6
 
@@ -261,8 +264,10 @@ class LiftCubeStateEnv(Env):
                 target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
                 target_qpos = np.array(action).clip(target_low, target_high)
         elif self.action_mode == "nullspace":
-            # actions are relative.
-            ee_action, gripper_action = action[:3], action[-1]
+            # actions are relative and normalized to [-1, 1]
+            raw_action = self.get_raw_action(action)
+            ee_action, gripper_action = raw_action[:3], raw_action[-1]
+
             goal_pos = ee_action + self.data.site("attachment_site").xpos
             goal_quat = np.array([0.5, 0.5, 0.5, 0.5])
             site_id = self.model.site("attachment_site").id
@@ -297,6 +302,20 @@ class LiftCubeStateEnv(Env):
         if self.render_mode == "human":
             self.viewer.sync()
         return info
+
+    def get_scaled_action(self, raw_action):
+        # go from raw action space to (-1, 1) actions
+        scaled_min, scaled_max = -1, 1
+        raw_action = np.clip(raw_action, self.action_min, self.action_max)
+        scaled_action = (raw_action - self.action_min) / (self.action_max - self.action_min) * (scaled_max - scaled_min) + scaled_min
+        return scaled_action
+    
+    def get_raw_action(self, scaled_action):
+        # go from (-1, 1) actions to raw action space
+        scaled_min, scaled_max = -1, 1
+        scaled_action = np.clip(scaled_action, scaled_min, scaled_max)
+        raw_action = (scaled_action - scaled_min) / (scaled_max - scaled_min) * (self.action_max - self.action_min) + self.action_min
+        return raw_action
 
     def get_observation(self):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
@@ -367,7 +386,7 @@ class LiftCubeStateEnv(Env):
             cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
             cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
             # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            robot_qpos = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, 0])
+            robot_qpos = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, -1.5])
 
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
@@ -391,7 +410,7 @@ class LiftCubeStateEnv(Env):
         ]
         self.dof_ids = np.array([model.joint(name).id for name in joint_names])
         self.actuator_ids = np.array([model.actuator(name).id for name in joint_names])
-        self.q0 = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, 0])
+        self.q0 = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, -1.5])
 
         # Integration timestep in seconds. This corresponds to the amount of time the joint
         # velocities will be integrated for to obtain the desired joint positions.
@@ -467,6 +486,12 @@ class LiftCubeStateEnv(Env):
                 msg = "picking phase"
 
         # print(f"{msg}: {reward}")
+        # penalize closed gripper when not close to the cube.
+        is_close = ee_to_cube < 0.05
+        gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] >= -1.5
+        gripper_penalty = 1.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
+        # print(f"task reward: {reward}, gripper_penalty: {gripper_penalty}, ee_to_cube: {ee_to_cube}")
+        reward -= gripper_penalty
 
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
