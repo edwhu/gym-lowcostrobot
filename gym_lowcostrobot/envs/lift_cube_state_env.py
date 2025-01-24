@@ -110,7 +110,8 @@ class LiftCubeStateEnv(Env):
         }
 
         if self.observation_mode in ["image", "both"]:
-            observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
+            # observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
+            observation_subspaces["image_front"] = spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8)
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
 
 
@@ -124,14 +125,14 @@ class LiftCubeStateEnv(Env):
             self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
             self.viewer.cam.azimuth = -75
             self.viewer.cam.distance = 1
-            self.rgb_array_renderer = mujoco.Renderer(self.model, height=84, width=84)
+            self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
         elif self.render_mode == "rgb_array":
-            self.rgb_array_renderer = mujoco.Renderer(self.model, height=84, width=84)
+            self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
 
         # Set additional utils
         self.threshold_height = 0.1
-        self.cube_low = np.array([-0.15, 0.05, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.15, 0.16, 0.015])
+        self.cube_low = np.array([-0.07, 0.04, 0.015])  # move the cube closer to the robot
+        self.cube_high = np.array([0.07, 0.18, 0.015])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -330,23 +331,30 @@ class LiftCubeStateEnv(Env):
 
         if self.observation_mode in ["image", "both"]:
             if self.render_obs:
-                # self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
-                # observation["image_front"] = self.rgb_array_renderer.render()
-                self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
-                wrist_img = self.rgb_array_renderer.render()
-                # convert rgb to grayscale
-                wrist_img = np.dot(wrist_img[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+                self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
+                img = self.rgb_array_renderer.render()
             else:
-                # observation["image_front"] = np.zeros((84, 84, 3), dtype=np.uint8)
-                wrist_img = np.zeros((84, 84), dtype=np.uint8)
-            if len(self.frames) == 0:
-                self.frames.append(wrist_img)
-                self.frames.append(wrist_img)
+                img = np.zeros((64, 64, 3), dtype=np.uint8)
+            observation["image_front"] = img
 
-            self.frames.append(wrist_img)
-            # stack the frames together into 84,84,3
-            wrist_frames = np.stack(self.frames, axis=-1)
-            observation["image_wrist"] = wrist_frames
+            # if self.render_obs:
+            #     # self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
+            #     # observation["image_front"] = self.rgb_array_renderer.render()
+            #     self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
+            #     wrist_img = self.rgb_array_renderer.render()
+            #     # convert rgb to grayscale
+            #     wrist_img = np.dot(wrist_img[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+            # else:
+            #     # observation["image_front"] = np.zeros((84, 84, 3), dtype=np.uint8)
+            #     wrist_img = np.zeros((84, 84), dtype=np.uint8)
+            # if len(self.frames) == 0:
+            #     self.frames.append(wrist_img)
+            #     self.frames.append(wrist_img)
+
+            # self.frames.append(wrist_img)
+            # # stack the frames together into 84,84,3
+            # wrist_frames = np.stack(self.frames, axis=-1)
+            # observation["image_wrist"] = wrist_frames
 
         return observation
 
@@ -505,10 +513,13 @@ class LiftCubeStateEnv(Env):
         return cube_pos.copy()
 
 if __name__ == "__main__":
-    env = LiftCubeStateEnv(render_mode="rgb_array")
-    env.reset()
-    for _ in range(1000):
-        action = env.action_space.sample()
-        obs, reward, done, info = env.step(action)
-        env.render()
+    env = LiftCubeStateEnv(observation_mode="both",render_mode="rgb_array")
+    while True:
+        obs, info = env.reset()
+        import ipdb; ipdb.set_trace()
+    # env.reset()
+    # for _ in range(1000):
+    #     action = env.action_space.sample()
+    #     obs, reward, done, info = env.step(action)
+    #     env.render()
     env.close()

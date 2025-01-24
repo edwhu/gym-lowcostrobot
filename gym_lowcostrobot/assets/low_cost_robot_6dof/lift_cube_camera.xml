@@ -29,10 +29,10 @@
           <!-- <geom friction="0.5" condim="4" pos="0 0 0" size="0.015 0.015 0.015" type="box" name="red_box" rgba="0.5 0 0 1" priority="1"/> -->
       </body>
 
-      <site name="bound1" type="box" pos="-0.15 0.11 0.01" size="0.005 0.11 0.005" rgba="1 0 0 0.1"/>
-      <site name="bound2" type="box" pos="0.15 0.11 0.01" size="0.005 0.11 0.005" rgba="1 0 0 0.1"/>
-      <site name="bound3" type="box" pos="0 0.05 0.01" size="0.15 0.005 0.005" rgba="1 0 0 0.1"/>
-      <site name="bound4" type="box" pos="0 0.16 0.01" size="0.15 0.005 0.005" rgba="1 0 0 0.1"/>
+      <site name="bound1" type="box" pos="-0.07 0.11 0.01" size="0.005 0.11 0.005" rgba="0 1 0 0.1"/>
+      <site name="bound2" type="box" pos="0.07 0.11 0.01" size="0.005 0.11 0.005" rgba="0 1 0 0.1"/>
+      <site name="bound3" type="box" pos="0 0.04 0.01" size="0.15 0.005 0.005" rgba="0 1 0 0.1"/>
+      <site name="bound4" type="box" pos="0 0.18 0.01" size="0.15 0.005 0.005" rgba="0 1 0 0.1"/>
 
 
 		<camera name="camera_front" pos="0.049 0.5 0.225" xyaxes="-0.998 0.056 -0.000 -0.019 -0.335 0.942"/>
