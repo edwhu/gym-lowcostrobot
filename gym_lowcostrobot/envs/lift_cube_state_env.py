@@ -134,9 +134,9 @@ class LiftCubeStateEnv(Env):
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
 
         # Set additional utils
-        self.threshold_height = 0.1
-        self.cube_low = np.array([-0.07, 0.04, 0.015])  # move the cube closer to the robot
-        self.cube_high = np.array([0.07, 0.18, 0.015])
+        self.threshold_height = 0.07
+        self.cube_low = np.array([-0.03, 0.08, 0.01])  # move the cube closer to the robot
+        self.cube_high = np.array([0.03, 0.14, 0.01])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -491,7 +491,7 @@ class LiftCubeStateEnv(Env):
         # penalize closed gripper when not close to the cube.
         is_close = ee_to_cube < 0.05
         gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] >= -1.5
-        gripper_penalty = 1.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
+        gripper_penalty = 0.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
         # print(f"task reward: {reward}, gripper_penalty: {gripper_penalty}, ee_to_cube: {ee_to_cube}")
         reward -= gripper_penalty
 
@@ -540,10 +540,10 @@ class LiftCubeStateEnv(Env):
         return cube_pos.copy()
 
 if __name__ == "__main__":
-    env = LiftCubeStateEnv(observation_mode="both",render_mode="rgb_array")
+    env = LiftCubeStateEnv(observation_mode="both",render_mode="human")
     while True:
         obs, info = env.reset()
-        import ipdb; ipdb.set_trace()
+        env.render()
     # env.reset()
     # for _ in range(1000):
     #     action = env.action_space.sample()

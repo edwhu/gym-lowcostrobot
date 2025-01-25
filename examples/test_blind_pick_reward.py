@@ -205,7 +205,6 @@ episodic_return = []
 episodic_success = []
 
 demos = deepcopy(demo_dict)
-for ep in range(100):
+for ep in range(1):
     demo = deepcopy(demo_dict)
     demo = collect_episode(demo, env, ep)
-    import ipdb; ipdb.set_trace()
