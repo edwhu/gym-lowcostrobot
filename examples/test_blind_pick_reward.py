@@ -5,7 +5,7 @@ from copy import deepcopy
 import imageio 
 from collections import deque
 
-np.set_printoptions(precision=4, suppress=True)
+np.set_printoptions(precision=3, suppress=True)
 
 # env = gym.make('LiftCubeStateCameraPrivileged-v0', render_mode="human", observation_mode="both", action_mode="nullspace")
 env = gym.make('LiftCubeState-v0', render_mode="human")
@@ -86,7 +86,8 @@ def collect_episode(demo, env, ep):
 
 
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
-    pos_diff = np.array([0.02, 0, 0.025])
+    # pos_diff = np.array([0.02, 0, 0.025])
+    pos_diff = np.array([0.00, 0, 0.025])
     desired_pos = pos_diff + desired_pos
     action = np.array([*desired_pos, -1])
 
@@ -119,7 +120,7 @@ def collect_episode(demo, env, ep):
     # go down over the box
     print('Going down for picking')
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
-    pos_diff = np.array([0.02, 0, -0.01])
+    pos_diff = np.array([0.00, 0, -0.01])
     desired_pos = pos_diff + desired_pos
     action = np.array([*desired_pos, -1])
     ee_pos = env.unwrapped.get_ee_pos()
@@ -205,6 +206,6 @@ episodic_return = []
 episodic_success = []
 
 demos = deepcopy(demo_dict)
-for ep in range(100):
+for ep in range(1):
     demo = deepcopy(demo_dict)
     demo = collect_episode(demo, env, ep)

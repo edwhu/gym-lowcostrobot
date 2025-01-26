@@ -270,7 +270,8 @@ class LiftCubeStateEnv(Env):
             ee_action, gripper_action = raw_action[:3], raw_action[-1]
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
-            goal_quat = np.array([0.5, 0.5, 0.5, 0.5])
+            goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
+
             site_id = self.model.site("attachment_site").id
 
             # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
@@ -388,7 +389,7 @@ class LiftCubeStateEnv(Env):
             cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
             cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
             # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            robot_qpos = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, -1.5])
+            robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
 
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
@@ -412,7 +413,7 @@ class LiftCubeStateEnv(Env):
         ]
         self.dof_ids = np.array([model.joint(name).id for name in joint_names])
         self.actuator_ids = np.array([model.actuator(name).id for name in joint_names])
-        self.q0 = np.array([-0.044, -0.17, -0.14, -1.5, -1.8, -1.5])
+        self.q0 = np.array([0,0,0,-1.44,-1.57,-1.5])
 
         # Integration timestep in seconds. This corresponds to the amount of time the joint
         # velocities will be integrated for to obtain the desired joint positions.
@@ -429,8 +430,8 @@ class LiftCubeStateEnv(Env):
 
 
         # Nullspace P gain.
-        self.Kn = np.asarray([10.0, 10.0, 10.0, 10.0, 5.0, 0.0])
-        self.Kn /= 100.0
+        self.Kn = np.asarray([10.0, 10.0, 10.0, 10.0, 10.0, 0.0])
+        # self.Kn /= 100.0
 
         # Maximum allowable joint velocity in rad/s.
         self.max_angvel = 0.785
@@ -492,8 +493,14 @@ class LiftCubeStateEnv(Env):
         is_close = ee_to_cube < 0.05
         gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] >= -1.5
         gripper_penalty = 0.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
-        # print(f"task reward: {reward}, gripper_penalty: {gripper_penalty}, ee_to_cube: {ee_to_cube}")
+
+        # penalize noisy actions using action norm
+        action_penalty = 0.1 * np.linalg.norm(action)
+
+        # print(f"task reward: {reward:.3f}, gripper_penalty: {gripper_penalty:.3f}, ee_to_cube: {ee_to_cube:.3f}, action_penalty: {action_penalty:.3f}")
+
         reward -= gripper_penalty
+        reward -= action_penalty
 
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
