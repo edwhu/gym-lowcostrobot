@@ -331,8 +331,8 @@ class LiftCubeStateEnv(Env):
         touch_left_finger = False
         touch_right_finger = False
         obj = "cube"
-        l_finger_geom_id = self.model.geom("link_6_collision").id
-        r_finger_geom_id = self.model.geom("link_5_collision").id
+        l_finger_geom_id = self.model.geom("link_6_pad").id
+        r_finger_geom_id = self.model.geom("link_5_pad").id
         for j in range(self.data.ncon):
             c = self.data.contact[j]
             body1 = self.model.geom_bodyid[c.geom1]
@@ -488,7 +488,7 @@ class LiftCubeStateEnv(Env):
                 reward += picking_reward
                 msg = "picking phase"
 
-        # print(f"{msg}: {reward}")
+        # print(f"{msg}: {reward}, {observation['touch'].all()}")
         # penalize closed gripper when not close to the cube.
         is_close = ee_to_cube < 0.05
         gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] >= -1.5
