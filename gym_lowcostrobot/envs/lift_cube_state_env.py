@@ -111,6 +111,7 @@ class LiftCubeStateEnv(Env):
             "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
             "touch": spaces.Box(low=-10.0, high=10.0, shape=(2,)),
             "arm_qpos": spaces.Box(low=-np.pi, high=np.pi, shape=(6,)),
+            "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
         }
 
         if self.observation_mode in ["image", "both"]:
@@ -248,8 +249,6 @@ class LiftCubeStateEnv(Env):
         """
         if self.action_mode == "ee":
             if len(action) == 4:
-                # raise NotImplementedError("EE mode not implemented yet")
-                # import ipdb; ipdb.set_trace()
                 ee_action, gripper_action = action[:3], action[-1]
 
                 # Update the robot position based on the action
@@ -451,6 +450,7 @@ class LiftCubeStateEnv(Env):
         self.frames.clear()
         
         observation = self.get_observation()
+        observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         # info = {'image_front': observation['image_front']}
         info = {'qpos': self.data.qpos.copy()}
         return observation, info
@@ -470,6 +470,7 @@ class LiftCubeStateEnv(Env):
         ee_to_cube = np.linalg.norm(ee_pos - cube_pos)
 
         terminated = cube_z >= self.threshold_height and ee_to_cube < 0.05
+        observation["log_is_success"] = np.ones((1,), dtype=np.float32) * terminated
         reward = 0
         if terminated:
             msg = "success phase"
