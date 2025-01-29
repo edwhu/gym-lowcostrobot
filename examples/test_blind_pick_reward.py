@@ -8,7 +8,7 @@ from collections import deque
 np.set_printoptions(precision=3, suppress=True)
 
 # env = gym.make('LiftCubeStateCameraPrivileged-v0', render_mode="human", observation_mode="both", action_mode="nullspace")
-env = gym.make('LiftCubeState-v0', render_mode="human")
+env = gym.make('LiftCubeStateOpenLoop-v0', render_mode="human")
 env.reset()
 
 demo_dict = {
@@ -40,6 +40,7 @@ def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, inf
 
     demo['rewards'].append(reward)
     demo['dones'].append(term or trunc)
+    # print(obs['initial_obj_pose'],obs['log_is_success'])
 
     return demo
 
@@ -47,6 +48,7 @@ def collect_episode(demo, env, ep):
 
     # while True:
     obs, info = env.reset()
+    # print(obs['initial_obj_pose'],obs['log_is_success'])
     # env.render()
 
     # demo['observations']['rgb'].append(obs['image_wrist'])

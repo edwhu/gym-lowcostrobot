@@ -77,7 +77,7 @@ class LiftCubeStateEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 200}
 
-    def __init__(self, observation_mode="state", action_mode="joint", render_mode=None, render_obs=True):
+    def __init__(self, observation_mode="state", action_mode="joint", render_mode=None, render_obs=True, include_initial_obj_pose=False):
         # Load the MuJoCo model and data
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
         self.data = mujoco.MjData(self.model)
@@ -113,6 +113,10 @@ class LiftCubeStateEnv(Env):
             "arm_qpos": spaces.Box(low=-np.pi, high=np.pi, shape=(6,)),
             "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
         }
+        self.include_initial_obj_pose = include_initial_obj_pose
+        if include_initial_obj_pose:
+            self.initial_obj_pose = np.zeros((7,), dtype=np.float32)
+            observation_subspaces["initial_obj_pose"] = spaces.Box(low=-np.inf, high=np.inf, shape=(7,))
 
         if self.observation_mode in ["image", "both"]:
             # observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
@@ -327,6 +331,9 @@ class LiftCubeStateEnv(Env):
             "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].copy().astype(np.float32),
             "ee_pos": self.get_ee_pos().astype(np.float32),
         }
+        if self.include_initial_obj_pose:
+            observation["initial_obj_pose"] = self.initial_obj_pose.copy().astype(np.float32)
+
         touch_left_finger = False
         touch_right_finger = False
         obj = "cube"
@@ -399,6 +406,9 @@ class LiftCubeStateEnv(Env):
         else:
             self.data.qpos = options["qpos"].copy()
             self.data.qvel = options["qvel"].copy()
+        
+        if self.include_initial_obj_pose:
+            self.initial_obj_pose = self.data.qpos[self.cube_dof_id:self.cube_dof_id+7].copy()
 
         # nullspace action space setup
         model = self.model
