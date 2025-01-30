@@ -120,7 +120,7 @@ class LiftCubeStateEnv(Env):
 
         if self.observation_mode in ["image", "both"]:
             # observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
-            observation_subspaces["image_front"] = spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8)
+            observation_subspaces["log_image_front"] = spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8)
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
 
 
@@ -363,7 +363,7 @@ class LiftCubeStateEnv(Env):
                 img = self.rgb_array_renderer.render()
             else:
                 img = np.zeros((64, 64, 3), dtype=np.uint8)
-            observation["image_front"] = img
+            observation["log_image_front"] = img
 
             # if self.render_obs:
             #     # self.rgb_array_renderer.update_scene(self.data, camera="camera_front")

@@ -28,9 +28,16 @@ def register_robotics_envs():
     )
 
 
-    # obs space is just low dimensional state
+    # used for training, only low dimensional observations
     register(
         id="LiftCubeState-v0",
+        entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
+        max_episode_steps=100,
+        kwargs={"observation_mode":"state", "action_mode":"nullspace"}
+    )
+    # used for eval, obs dict contains an image for visualization.
+    register(
+        id="LiftCubeStateEval-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
         max_episode_steps=100,
         kwargs={"observation_mode":"both", "action_mode":"nullspace", "render_mode":"rgb_array"}
