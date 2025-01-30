@@ -46,13 +46,20 @@ def register_robotics_envs():
         id="LiftCubeStateOpenLoop-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
         max_episode_steps=100,
+        kwargs={"observation_mode":"state", "action_mode":"nullspace", "include_initial_obj_pose":True}
+    )
+
+    register(
+        id="LiftCubeStateOpenLoopEval-v0",
+        entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
+        max_episode_steps=100,
         kwargs={"observation_mode":"both", "action_mode":"nullspace", "render_mode":"rgb_array", "include_initial_obj_pose":True}
     )
 
     register(
         id="LiftCubeStateHumanRender-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
-        max_episode_steps=70,
+        max_episode_steps=100,
         kwargs={"observation_mode":"both", "action_mode":"nullspace", "render_mode":"human"}
     )
 
