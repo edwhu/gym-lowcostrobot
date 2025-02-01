@@ -105,7 +105,7 @@ class LiftCubeStateEnv(Env):
 
         # Set the observations space
         self.observation_mode = observation_mode
-        observation_subspaces = {
+        self.observation_subspaces = {
             "qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(13,)),
             "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(12,)),
             "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
@@ -116,15 +116,15 @@ class LiftCubeStateEnv(Env):
         self.include_initial_obj_pose = include_initial_obj_pose
         if include_initial_obj_pose:
             self.initial_obj_pose = np.zeros((7,), dtype=np.float32)
-            observation_subspaces["initial_obj_pose"] = spaces.Box(low=-np.inf, high=np.inf, shape=(7,))
+            self.observation_subspaces["initial_obj_pose"] = spaces.Box(low=-np.inf, high=np.inf, shape=(7,))
 
         if self.observation_mode in ["image", "both"]:
             # observation_subspaces["image_wrist"] = spaces.Box(0, 255, shape=(84, 84, 3), dtype=np.uint8)
-            observation_subspaces["log_image_front"] = spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8)
+            self.observation_subspaces["log_image_front"] = spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8)
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
 
 
-        self.observation_space = gym.spaces.Dict(observation_subspaces)
+        self.observation_space = gym.spaces.Dict(self.observation_subspaces)
 
         # Set the render utilities
         self.render_obs = render_obs
@@ -557,10 +557,38 @@ class LiftCubeStateEnv(Env):
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
         return cube_pos.copy()
 
+class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
+    # modify observation space to just have arm_qpos
+    # and rename log_image_front to log/image_front
+    def __init__(self, observation_mode="state", action_mode="joint", render_mode=None, render_obs=True, include_initial_obj_pose=False):
+        super().__init__(observation_mode, action_mode, render_mode, render_obs, include_initial_obj_pose)
+        self.observation_subspaces = {k: v for k, v in self.observation_subspaces.items() if k in ["arm_qpos", "log_image_front"]}
+        if "log_image_front" in self.observation_subspaces:
+            self.observation_subspaces["log/image_front"] = self.observation_subspaces.pop("log_image_front")
+        self.observation_space = gym.spaces.Dict(self.observation_subspaces)
+    
+    def observation(self, observation):
+        # pop everything except for keys in self.observation_space
+        new_observation = {k: v for k, v in observation.items() if k in self.observation_space.spaces.keys()}
+        if "log_image_front" in observation and "log/image_front" in self.observation_space.spaces.keys():
+            new_observation["log/image_front"] = observation.pop("log_image_front")
+        return new_observation
+    
+    def reset(self, seed=None, options=None):
+        observation, info = super().reset(seed=seed, options=options)
+        return self.observation(observation), info
+    
+    def step(self, action):
+        observation, reward, terminated, truncated, info = super().step(action)
+        return self.observation(observation), reward, terminated, truncated, info
+
+
 if __name__ == "__main__":
-    env = LiftCubeStateEnv(observation_mode="both",render_mode="human")
+    # env = LiftCubeStateEnv(observation_mode="both",render_mode="human")
+    env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
     while True:
         obs, info = env.reset()
+        import ipdb; ipdb.set_trace()
         env.render()
     # env.reset()
     # for _ in range(1000):

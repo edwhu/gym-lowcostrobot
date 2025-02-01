@@ -57,6 +57,20 @@ def register_robotics_envs():
     )
 
     register(
+        id="LiftCubeStateDreamerV4-v0",
+        entry_point="gym_lowcostrobot.envs:LiftCubeStateDreamerV4Env",
+        max_episode_steps=100,
+        kwargs={"observation_mode":"state", "action_mode":"nullspace"}
+    )
+    # used for eval, obs dict contains an image for visualization.
+    register(
+        id="LiftCubeStateDreamerV4Eval-v0",
+        entry_point="gym_lowcostrobot.envs:LiftCubeStateDreamerV4Env",
+        max_episode_steps=100,
+        kwargs={"observation_mode":"both", "action_mode":"nullspace", "render_mode":"rgb_array"}
+    )
+
+    register(
         id="LiftCubeStateHumanRender-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
         max_episode_steps=100,
