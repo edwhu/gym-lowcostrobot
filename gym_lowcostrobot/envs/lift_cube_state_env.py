@@ -562,7 +562,7 @@ class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
     # and rename log_image_front to log/image_front
     def __init__(self, observation_mode="state", action_mode="joint", render_mode=None, render_obs=True, include_initial_obj_pose=False):
         super().__init__(observation_mode, action_mode, render_mode, render_obs, include_initial_obj_pose)
-        self.observation_subspaces = {k: v for k, v in self.observation_subspaces.items() if k in ["arm_qpos", "log_image_front"]}
+        self.observation_subspaces = {k: v for k, v in self.observation_subspaces.items() if k in ["arm_qpos", "log_image_front", "log_is_success"]}
         if "log_image_front" in self.observation_subspaces:
             self.observation_subspaces["log/image_front"] = self.observation_subspaces.pop("log_image_front")
         self.observation_space = gym.spaces.Dict(self.observation_subspaces)
@@ -570,6 +570,7 @@ class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
     def observation(self, observation):
         # pop everything except for keys in self.observation_space
         new_observation = {k: v for k, v in observation.items() if k in self.observation_space.spaces.keys()}
+        new_observation["log/is_success"] = observation.pop("log_is_success")
         if "log_image_front" in observation and "log/image_front" in self.observation_space.spaces.keys():
             new_observation["log/image_front"] = observation.pop("log_image_front")
         return new_observation
