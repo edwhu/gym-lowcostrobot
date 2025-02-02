@@ -110,7 +110,7 @@ class LiftCubeStateEnv(Env):
             "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(12,)),
             "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
             "touch": spaces.Box(low=-10.0, high=10.0, shape=(2,)),
-            "arm_qpos": spaces.Box(low=-np.pi, high=np.pi, shape=(6,)),
+            "arm_qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
             "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
         }
         self.include_initial_obj_pose = include_initial_obj_pose
