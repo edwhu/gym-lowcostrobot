@@ -18,7 +18,7 @@ class LiftCubeStateEnv(Env):
 
     ## Action space
 
-    Two action modes are available: "joint" and "ee". In the "joint" mode, the action space is a 6-dimensional box
+    Two action modes are available: "joint" and "nullspace". In the "joint" mode, the action space is a 6-dimensional box
     representing the target joint angles.
 
     | Index | Action              | Type (unit) | Min  | Max |
@@ -30,37 +30,19 @@ class LiftCubeStateEnv(Env):
     | 4     | Wrist roll joint    | Float (rad) | -1.0 | 1.0 |
     | 5     | Gripper joint       | Float (rad) | -1.0 | 1.0 |
 
-    In the "ee" mode, the action space is a 4-dimensional box representing the target end-effector position and the
-    gripper position.
+    In the "nullspace" mode, the action space is a 4-dimensional box representing the target end-effector velocity and the
+    gripper position. The actions are normalized to -1, 1, see the bounds in _initialize_action_space.
 
     | Index | Action        | Type (unit) | Min  | Max |
     | ----- | ------------- | ----------- | ---- | --- |
-    | 0     | X             | Float (m)   | -1.0 | 1.0 |
-    | 1     | Y             | Float (m)   | -1.0 | 1.0 |
-    | 2     | Z             | Float (m)   | -1.0 | 1.0 |
-    | 5     | Gripper joint | Float (rad) | -1.0 | 1.0 |
+    | 0     | X             | Float       | -1.0 | 1.0 |
+    | 1     | Y             | Float       | -1.0 | 1.0 |
+    | 2     | Z             | Float       | -1.0 | 1.0 |
+    | 5     | Gripper joint | Float       | -1.0 | 1.0 |
 
     ## Observation space
 
-    The observation space is a dictionary containing the following subspaces:
-
-    - `"arm_qpos"`: the joint angles of the robot arm in radians, shape (6,)
-    - `"arm_qvel"`: the joint velocities of the robot arm in radians per second, shape (6,)
-    - `"image_front"`: the front image of the camera of size (240, 320, 3)
-    - `"image_top"`: the top image of the camera of size (240, 320, 3)
-    - `"cube_pos"`: the position of the cube, as (x, y, z)
-    - `"ee_pos"`: the position of the ee, as (x, y, z)
-
-    Three observation modes are available: "image" (default), "state", and "both".
-
-    | Key             | `"image"` | `"state"` | `"both"` |
-    | --------------- | --------- | --------- | -------- |
-    | `"arm_qpos"`    | ✓         | ✓         | ✓        |
-    | `"arm_qvel"`    | ✓         | ✓         | ✓        |
-    | `"image_front"` | ✓         |           | ✓        |
-    | `"image_top"`   | ✓         |           | ✓        |
-    | `"cube_pos"`    |           | ✓         | ✓        |
-    | `"ee_pos"`      |           | ✓         | ✓        |
+    The observation space is a dictionary containing multiple keys. See _initialize_observation_space for the full list of keys.
 
     ## Reward
 
@@ -77,22 +59,29 @@ class LiftCubeStateEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 200}
 
-    def __init__(self, observation_mode="state", action_mode="joint", render_mode=None, render_obs=True, include_initial_obj_pose=False):
+    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False, use_action_noise=True):
+        self._initialize_mujoco()
+        self._initialize_action_space(action_mode)
+        self._initialize_observation_space(observation_mode, include_initial_obj_pose)
+        self._initialize_renderer(render_mode, render_obs)
+        self._initialize_task_variables(use_action_noise)
+    
+    def _initialize_mujoco(self):
         # Load the MuJoCo model and data
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
         self.data = mujoco.MjData(self.model)
-
         # Enable gravity compensation. Set to 0.0 to disable.
         gravity_compensation = True
         for body in ["base_link", "link_1", "link_2", "link_3", "link_4", "link_5", "link_6"]:
             body_id = self.model.body(body).id
             self.model.body_gravcomp[body_id] = float(gravity_compensation)
-
-
         self.model.body_gravcomp[:] = float(gravity_compensation)
         # self.dt: float = 0.002
         # self.model.opt.timestep = self.dt
-
+        self.nb_dof = 6
+        self.control_decimation = 40 # number of simulation steps per control step
+    
+    def _initialize_action_space(self, action_mode):
         # Set the action space
         self.action_mode = action_mode
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
@@ -101,8 +90,7 @@ class LiftCubeStateEnv(Env):
         self.action_min = np.array([-0.1, -0.1, -0.1, -2.0])
         self.action_max = np.array([0.1, 0.1, 0.1, 11.0])
 
-        self.nb_dof = 6
-
+    def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         # Set the observations space
         self.observation_mode = observation_mode
         self.observation_subspaces = {
@@ -123,9 +111,9 @@ class LiftCubeStateEnv(Env):
             self.observation_subspaces["log_image_front"] = spaces.Box(0, 255, shape=(64, 64, 3), dtype=np.uint8)
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
 
-
         self.observation_space = gym.spaces.Dict(self.observation_subspaces)
-
+    
+    def _initialize_renderer(self, render_mode, render_obs):
         # Set the render utilities
         self.render_obs = render_obs
         assert render_mode is None or render_mode in self.metadata["render_modes"]
@@ -137,8 +125,9 @@ class LiftCubeStateEnv(Env):
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
         elif self.render_mode == "rgb_array":
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
-
-        # Set additional utils
+    
+    def _initialize_task_variables(self, use_action_noise):
+        # Set variables used for the task
         self.threshold_height = 0.07
         self.cube_low = np.array([-0.03, 0.08, 0.01])  # move the cube closer to the robot
         self.cube_high = np.array([0.03, 0.14, 0.01])
@@ -150,9 +139,18 @@ class LiftCubeStateEnv(Env):
         # if the arm is not at address 0 then the cube will have 7 states in qpos and 6 in qvel
         if self.arm_dof_id != 0:
             self.arm_dof_id = self.arm_dof_vel_id + 1
+        self.joint_names = [f"joint_{i}" for i in range(1, 7)]
 
-        self.control_decimation = 40 # number of simulation steps per control step
-        self.frames = deque(maxlen=3)
+        # domain randomization variables
+        self._dr_noise = {
+            # add onto data.ctrl, range is in radians
+            "joint_ctrl_min": np.array([-0.01, -0.01, -0.1, -0.01, -0.01, -0.01]),
+            "joint_ctrl_max": np.array([0.01, 0.01, 0.001, 0.01, 0.01, 0.01]),
+        }
+        if not use_action_noise:
+            self._dr_noise = {k: np.zeros_like(v) for k, v in self._dr_noise.items()}
+
+
 
     def inverse_kinematics(self, ee_target_pos, step=0.2, joint_name="end_effector", nb_dof=6, regularization=1e-6):
         """
@@ -210,12 +208,10 @@ class LiftCubeStateEnv(Env):
         model = self.model
         data = self.data
         # Spatial velocity (aka twist).
-        # dx = data.mocap_pos[mocap_id] - data.site(site_id).xpos
         dx = goal_pos - data.site(site_id).xpos
         self.twist[:3] = self.Kpos * dx / self.integration_dt
         mujoco.mju_mat2Quat(self.site_quat, data.site(site_id).xmat)
         mujoco.mju_negQuat(self.site_quat_conj, self.site_quat)
-        # mujoco.mju_mulQuat(error_quat, data.mocap_quat[mocap_id], site_quat_conj)
         mujoco.mju_mulQuat(self.error_quat, goal_quat, self.site_quat_conj)
         mujoco.mju_quat2Vel(self.twist[3:], self.error_quat, 1.0)
         self.twist[3:] *= self.Kori / self.integration_dt
@@ -248,27 +244,12 @@ class LiftCubeStateEnv(Env):
         Step the simulation forward based on the action
 
         Action shape
-        - EE mode: [dx, dy, dz, gripper]
+        - nullspace EE mode: [dx, dy, dz, gripper]
         - Joint mode: [q1, q2, q3, q4, q5, q6, gripper]
         """
-        if self.action_mode == "ee":
-            if len(action) == 4:
-                ee_action, gripper_action = action[:3], action[-1]
-
-                # Update the robot position based on the action
-                ee_id = self.model.site("end_effector").id
-                # ee_target_pos = self.data.site_xpos[ee_id] + ee_action
-                ee_target_pos = ee_action
-
-                # Use inverse kinematics to get the joint action wrt the end effector current position and displacement
-                target_qpos = self.inverse_kinematics(ee_target_pos=ee_target_pos)
-                target_qpos[-1:] = gripper_action
-            else:
-                target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
-                target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
-                target_qpos = np.array(action).clip(target_low, target_high)
-        elif self.action_mode == "nullspace":
-            # actions are relative and normalized to [-1, 1]
+        if self.action_mode == "nullspace":
+            assert action.min() >= -1.0 and action.max() <= 1.0
+            # assume actions are relative and normalized to [-1, 1]
             raw_action = self.get_raw_action(action)
             ee_action, gripper_action = raw_action[:3], raw_action[-1]
 
@@ -285,24 +266,22 @@ class LiftCubeStateEnv(Env):
             )
             target_qpos[-1:] += gripper_action
 
-
         elif self.action_mode == "joint":
             # target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
             # target_high = np.array([3.14159, 1.22173, 1.74533, 1.91986, 2.96706, 0.0523599])
             # target_qpos = np.array(action).clip(target_low, target_high)
             target_qpos = np.array(action)
         else:
-            raise ValueError("Invalid action mode, must be 'ee' or 'joint'")
+            raise ValueError("Invalid action mode, must be 'nullspace' or 'joint'")
+
 
         # Set the target position
-        self.data.ctrl = target_qpos
-        info = {"target_qpos": target_qpos}
+        ctrl_noise = np.random.uniform(self._dr_noise["joint_ctrl_min"], self._dr_noise["joint_ctrl_max"]) # then add low level control noise.
+        self.data.ctrl = target_qpos + ctrl_noise 
+
+        info = {"target_qpos": target_qpos, "goal_pos": goal_pos}
 
         # Step the simulation forward
-        # for _ in range(self.control_decimation):
-        #     mujoco.mj_step(self.model, self.data)
-        #     if self.render_mode == "human":
-        #         self.viewer.sync()
         mujoco.mj_step(self.model, self.data, self.control_decimation)
         if self.render_mode == "human":
             self.viewer.sync()
@@ -365,25 +344,6 @@ class LiftCubeStateEnv(Env):
                 img = np.zeros((64, 64, 3), dtype=np.uint8)
             observation["log_image_front"] = img
 
-            # if self.render_obs:
-            #     # self.rgb_array_renderer.update_scene(self.data, camera="camera_front")
-            #     # observation["image_front"] = self.rgb_array_renderer.render()
-            #     self.rgb_array_renderer.update_scene(self.data, camera="camera_wrist")
-            #     wrist_img = self.rgb_array_renderer.render()
-            #     # convert rgb to grayscale
-            #     wrist_img = np.dot(wrist_img[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
-            # else:
-            #     # observation["image_front"] = np.zeros((84, 84, 3), dtype=np.uint8)
-            #     wrist_img = np.zeros((84, 84), dtype=np.uint8)
-            # if len(self.frames) == 0:
-            #     self.frames.append(wrist_img)
-            #     self.frames.append(wrist_img)
-
-            # self.frames.append(wrist_img)
-            # # stack the frames together into 84,84,3
-            # wrist_frames = np.stack(self.frames, axis=-1)
-            # observation["image_wrist"] = wrist_frames
-
         return observation
 
     def reset(self, seed=None, options=None):
@@ -412,16 +372,8 @@ class LiftCubeStateEnv(Env):
 
         # nullspace action space setup
         model = self.model
-        joint_names = [
-            "joint_1",
-            "joint_2",
-            "joint_3",
-            "joint_4",
-            "joint_5",
-            "joint_6",
-        ]
-        self.dof_ids = np.array([model.joint(name).id for name in joint_names])
-        self.actuator_ids = np.array([model.actuator(name).id for name in joint_names])
+        self.dof_ids = np.array([model.joint(name).id for name in self.joint_names])
+        self.actuator_ids = np.array([model.actuator(name).id for name in self.joint_names])
         self.q0 = np.array([0,0,0,-1.44,-1.57,-1.5])
 
         # Integration timestep in seconds. This corresponds to the amount of time the joint
@@ -437,10 +389,8 @@ class LiftCubeStateEnv(Env):
         self.Kpos: float = 0.95
         self.Kori: float = 0.95
 
-
         # Nullspace P gain.
         self.Kn = np.asarray([10.0, 10.0, 10.0, 10.0, 10.0, 0.0])
-        # self.Kn /= 100.0
 
         # Maximum allowable joint velocity in rad/s.
         self.max_angvel = 0.785
@@ -453,16 +403,13 @@ class LiftCubeStateEnv(Env):
         self.site_quat_conj = np.zeros(4)
         self.error_quat = np.zeros(4)
 
-
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
-
-        self.frames.clear()
         
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         # info = {'image_front': observation['image_front']}
-        info = {'qpos': self.data.qpos.copy()}
+        info = {'qpos': self.data.qpos.copy(), 'ee_pos': self.get_ee_pos()}
         return observation, info
 
     def step(self, action):
@@ -523,7 +470,7 @@ class LiftCubeStateEnv(Env):
         info["action_ee"] = action_ee
         info["qpos"] = self.data.qpos.copy()
         info["qvel"] = self.data.qvel.copy()
-        info["target_qpos"] = action_info["target_qpos"]
+        info.update(action_info)
 
         return observation, reward, terminated, False, info
 
@@ -586,12 +533,23 @@ class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
 
 
 if __name__ == "__main__":
-    # env = LiftCubeStateEnv(observation_mode="both",render_mode="human")
-    env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
+    # np.set_printoptions(precision=3, suppress=True)
+    env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
+    # env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
+    obs, info = env.reset()
+    env.render()
+    goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
     while True:
-        obs, info = env.reset()
-        import ipdb; ipdb.set_trace()
+        pos_diff = goal - obs["ee_pos"][:3]
+        raw_action = np.array([*pos_diff, 0.0])
+        # print(raw_action, end="\r")
+        print(pos_diff)
+        # action is [dx, dy, dz, gripper]
+        # and is normalized to [-1, 1]
+        scaled_action = env.get_scaled_action(raw_action)
+        obs, reward, term, trunc, info = env.step(scaled_action)
         env.render()
+        # print(f"goal:{info['goal_pos']}, pos: {obs['ee_pos'][:3]}, abs diff per dim: {np.abs(info['goal_pos'] - obs['ee_pos'][:3])}")
     # env.reset()
     # for _ in range(1000):
     #     action = env.action_space.sample()
