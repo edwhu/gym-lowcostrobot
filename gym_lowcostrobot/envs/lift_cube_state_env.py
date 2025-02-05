@@ -144,8 +144,8 @@ class LiftCubeStateEnv(Env):
         # domain randomization variables
         self._dr_noise = {
             # add onto data.ctrl, range is in radians
-            "joint_ctrl_min": np.array([-0.01, -0.01, -0.1, -0.01, -0.01, -0.01]),
-            "joint_ctrl_max": np.array([0.01, 0.01, 0.001, 0.01, 0.01, 0.01]),
+            "joint_ctrl_min": np.array([-0.001, -0.001, -0.1, -0.001, -0.001, -0.0001]),
+            "joint_ctrl_max": np.array([0.001, 0.001, 0.001, 0.001, 0.001, 0.0001]),
         }
         if not use_action_noise:
             self._dr_noise = {k: np.zeros_like(v) for k, v in self._dr_noise.items()}
