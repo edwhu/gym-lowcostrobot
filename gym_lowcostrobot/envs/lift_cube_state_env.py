@@ -59,7 +59,7 @@ class LiftCubeStateEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 200}
 
-    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False, use_action_noise=True):
+    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False, use_action_noise=False):
         self._initialize_mujoco()
         self._initialize_action_space(action_mode)
         self._initialize_observation_space(observation_mode, include_initial_obj_pose)
