@@ -144,8 +144,11 @@ class LiftCubeStateEnv(Env):
         # domain randomization variables
         self._dr_noise = {
             # add onto data.ctrl, range is in radians
-            "joint_ctrl_min": np.array([-0.001, -0.001, -0.1, -0.001, -0.001, -0.0001]),
-            "joint_ctrl_max": np.array([0.001, 0.001, 0.001, 0.001, 0.001, 0.0001]),
+            "joint_ctrl_min": np.array([-0.0001] * 6),
+            "joint_ctrl_max": np.array([0.0001] * 6),
+            "action_min": np.array([-0.005, -0.005, -0.005, -0.000001]),
+            "action_max": np.array([0.005, 0.005, 0.005, 0.000001]),
+
         }
         if not use_action_noise:
             self._dr_noise = {k: np.zeros_like(v) for k, v in self._dr_noise.items()}
@@ -251,6 +254,8 @@ class LiftCubeStateEnv(Env):
             assert action.min() >= -1.0 and action.max() <= 1.0
             # assume actions are relative and normalized to [-1, 1]
             raw_action = self.get_raw_action(action)
+            # add action noise to the raw action
+            raw_action += self.np_random.uniform(self._dr_noise["action_min"], self._dr_noise["action_max"])
             ee_action, gripper_action = raw_action[:3], raw_action[-1]
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
@@ -276,7 +281,7 @@ class LiftCubeStateEnv(Env):
 
 
         # Set the target position
-        ctrl_noise = np.random.uniform(self._dr_noise["joint_ctrl_min"], self._dr_noise["joint_ctrl_max"]) # then add low level control noise.
+        ctrl_noise = self.np_random.uniform(self._dr_noise["joint_ctrl_min"], self._dr_noise["joint_ctrl_max"]) # then add low level control noise.
         self.data.ctrl = target_qpos + ctrl_noise 
 
         info = {"target_qpos": target_qpos, "goal_pos": goal_pos}
