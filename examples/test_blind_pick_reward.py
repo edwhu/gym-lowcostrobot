@@ -59,9 +59,9 @@ def collect_episode(demo, env, ep):
     i = 0
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
     # pos_diff = np.array([0.02, 0, 0.025])
-    pos_diff = np.array([0.00, -0.05, 0.025])
+    pos_diff = np.array([0.01, 0.00, 0.025])
     desired_pos = pos_diff + desired_pos
-    action = np.array([*desired_pos, -1])
+    action = np.array([*desired_pos, 1])
 
     # print("Descending down to the box")
     # go right over the box.
@@ -92,9 +92,9 @@ def collect_episode(demo, env, ep):
     # go down over the box
     # print('Going down for picking')
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
-    pos_diff = np.array([0.00, -0.01, -0.01])
+    pos_diff = np.array([0.01, 0.00, -0.01])
     desired_pos = pos_diff + desired_pos
-    action = np.array([*desired_pos, -1])
+    action = np.array([*desired_pos, 1])
     ee_pos = env.unwrapped.get_ee_pos()
     while np.linalg.norm(ee_pos[:3] - desired_pos) > 0.01:
         noise = np.random.normal(0, pos_action_noise, size=3)
@@ -123,7 +123,7 @@ def collect_episode(demo, env, ep):
     # print("Closing the gripper")
     ee_pos = env.unwrapped.get_ee_pos()
     desired_pos = ee_pos[:3]
-    action = np.array([*desired_pos, 10])
+    action = np.array([*desired_pos, -12])
     for _ in range(10):
         noise = np.random.normal(0, pos_action_noise, size=3)
         rel_action = action - ee_pos
@@ -150,7 +150,7 @@ def collect_episode(demo, env, ep):
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
     pos_diff = np.array([0.00, 0, 0.12])
     desired_pos = pos_diff + desired_pos
-    action = np.array([*desired_pos, 10])
+    action = np.array([*desired_pos, -12])
     ee_pos = env.unwrapped.get_ee_pos()
     while np.linalg.norm(ee_pos[:3] - desired_pos) > 0.01:
         noise = np.random.normal(0, pos_action_noise, size=3)
@@ -180,7 +180,8 @@ episodic_success = []
 demos = deepcopy(demo_dict)
 for ep in range(1000):
     demo = deepcopy(demo_dict)
+    print(ep)
     demo = collect_episode(demo, env, ep)
     success = np.sum(demo['rewards']) > 300
     episodic_success.append(success)
-    print(f"Running success rate: {np.mean(episodic_success):.2f}, {ep} episodes", end='\r')
+    print(f"Running success rate: {np.mean(episodic_success):.2f}, {ep} episodes", end='\n')

@@ -87,8 +87,8 @@ class LiftCubeStateEnv(Env):
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
         # used for bounding the nullspace controller
-        self.action_min = np.array([-0.1, -0.1, -0.1, -2.0])
-        self.action_max = np.array([0.1, 0.1, 0.1, 11.0])
+        self.action_min = np.array([-0.1, -0.1, -0.1, -11.0])
+        self.action_max = np.array([0.1, 0.1, 0.1, 2.0])
 
     def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         # Set the observations space
@@ -128,9 +128,10 @@ class LiftCubeStateEnv(Env):
     
     def _initialize_task_variables(self, use_action_noise):
         # Set variables used for the task
-        self.threshold_height = 0.07
-        self.cube_low = np.array([-0.03, 0.08, 0.01])  # move the cube closer to the robot
-        self.cube_high = np.array([0.03, 0.14, 0.01])
+        self.threshold_height = 0.06
+        ## modified to make the cube generate in the boundaries.
+        self.cube_low = np.array([-0.14, -0.03, 0.01])  # move the cube closer to the robot
+        self.cube_high = np.array([-0.08, 0.03, 0.01])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -144,8 +145,8 @@ class LiftCubeStateEnv(Env):
         # domain randomization variables
         self._dr_noise = {
             # add onto data.ctrl, range is in radians
-            "joint_ctrl_min": np.array([-0.0001] * 6),
-            "joint_ctrl_max": np.array([0.0001] * 6),
+            "joint_ctrl_min": np.array([-0.001] * 6),
+            "joint_ctrl_max": np.array([0.001] * 6),
             "action_min": np.array([-0.005, -0.005, -0.005, -0.000001]),
             "action_max": np.array([0.005, 0.005, 0.005, 0.000001]),
 
@@ -259,7 +260,8 @@ class LiftCubeStateEnv(Env):
             ee_action, gripper_action = raw_action[:3], raw_action[-1]
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
-            goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
+            goal_quat = np.array([0.5, 0.5, 0.5, 0.5]) # keep the orientation of the end effector fixed
+            # goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
 
             site_id = self.model.site("attachment_site").id
 
@@ -360,7 +362,9 @@ class LiftCubeStateEnv(Env):
             cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
             cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
             # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
+            #### CHANGING THIS POSITION IN WHAT WAS USED IN REAL ROBOT TESTING
+            # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
+            robot_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.000088])
 
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
@@ -544,11 +548,16 @@ if __name__ == "__main__":
     obs, info = env.reset()
     env.render()
     goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
+    print(goal)
+    goal = [-0.105, 0.081, 0.05]
+    print(goal)
     while True:
+        pos = obs["ee_pos"][:3]
         pos_diff = goal - obs["ee_pos"][:3]
         raw_action = np.array([*pos_diff, 0.0])
         # print(raw_action, end="\r")
-        print(pos_diff)
+        #print(pos_diff)
+        print(pos)
         # action is [dx, dy, dz, gripper]
         # and is normalized to [-1, 1]
         scaled_action = env.get_scaled_action(raw_action)

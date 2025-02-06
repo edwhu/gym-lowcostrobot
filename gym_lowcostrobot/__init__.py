@@ -65,7 +65,7 @@ def register_robotics_envs():
         kwargs={"observation_mode":"both", "action_mode":"nullspace", "render_mode":"rgb_array", "use_action_noise":True}
     )
     register(
-        id="LiftCubeStateNoiseHumanRender-v0",
+        id="LiftCubeStateNoisyHumanRender-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateEnv",
         max_episode_steps=100,
         kwargs={"observation_mode":"both", "action_mode":"nullspace", "render_mode":"human", "use_action_noise":True}
