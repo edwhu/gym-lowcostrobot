@@ -364,7 +364,7 @@ class LiftCubeStateEnv(Env):
             # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             #### CHANGING THIS POSITION IN WHAT WAS USED IN REAL ROBOT TESTING
             # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
-            robot_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.000088])
+            robot_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
 
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
@@ -458,7 +458,7 @@ class LiftCubeStateEnv(Env):
         # print(f"{msg}: {reward}, {observation['touch'].all()}")
         # penalize closed gripper when not close to the cube.
         is_close = ee_to_cube < 0.05
-        gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] >= -1.5
+        gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] <= 0.7 # 0 is closed and 2.5 is open
         gripper_penalty = 0.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
 
         # penalize noisy actions using action norm
