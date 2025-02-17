@@ -55,7 +55,7 @@
       <geom mesh="base_link_collision" class="collision"/>
       
       <!-- <body name="link_1" pos="0.012 0 0.0409"> -->
-      <body name="link_1" pos="0.0093 0 0.0409" >
+      <body name="link_1" pos="0.0093 0 0.0370" >
         <!-- <inertial pos="0.011924 -0.00048792 0.013381" quat="-0.0190903 0.705417 0.0178052 0.708312" mass="0.05014" diaginertia="1.44921e-05 1.2371e-05 7.59138e-06"/> -->
         <!-- <joint name="joint_1" pos="0 0 0" axis="0 0 -1" range="-3.14 3.14"/> -->
         <joint name="joint_1" pos="0 0 0" axis="0 0 1" range="-1.57 1.57"/>
@@ -129,6 +129,7 @@
 
   <contact>
     <exclude name="exclude_base_link_link_1" body1="base_link" body2="link_1"/>
+    <exclude name="exclude_base_link_link_2" body1="base_link" body2="link_2"/>
   </contact>
 
   <actuator>
