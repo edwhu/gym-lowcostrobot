@@ -1,27 +1,25 @@
 import os
+import time
 
 import gymnasium as gym
+from gymnasium import Env, spaces
 import mujoco
 import mujoco.viewer
 import numpy as np
-from gymnasium import Env, spaces
-import time
+import matplotlib.pyplot as plt
 
 from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
-
-# import lowcostrobot_main
-# from lowcostrobot_main.robot import Robot
-# from lowcostrobot_main.robot import Dynamixel
-# from dynamixel_sdk import *
-
 from gym_lowcostrobot.envs.dynamixel import Dynamixel
 from gym_lowcostrobot.envs.robot import Robot
 
 
-DEVICE_NAME='/dev/ttyACM0'
 
+# DEVICE_NAME='/dev/ttyACM0'
+DEVICE_NAME='/dev/tty.usbmodem58760435361'
+MOTOR_3_BIAS = 30
+ACTION_SLEEP_SEC = 1.0
 
-class LiftCubeStateEnv(Env):
+class LiftCubeRealEnv(Env):
     """
     ## Description
 
@@ -82,11 +80,12 @@ class LiftCubeStateEnv(Env):
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
         self.initial_joint_pose = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.000088])
+        self.motor_3_bias = MOTOR_3_BIAS
         robot_realqpos = self.radian_to_position(self.initial_joint_pose)
-        robot_realqpos[2] += 30
+        robot_realqpos[2] += self.motor_3_bias
         self.realrobot.set_goal_pos(robot_realqpos)
-        print("bkp 1")
-        time.sleep(3)
+        # print("bkp 1")
+        time.sleep(ACTION_SLEEP_SEC)
 
     def radian_to_position(self, values):
         scale = 4095 / (3.14 - (-3.14))
@@ -320,9 +319,9 @@ class LiftCubeStateEnv(Env):
         mujoco.mj_step(self.model, self.data, self.control_decimation)
         real_robot_target_qpos = target_qpos_real.copy()
         # Set the new position for the real robot with naive grav comp term
-        real_robot_target_qpos[2] += 30
+        real_robot_target_qpos[2] += self.motor_3_bias
         self.realrobot.set_goal_pos(real_robot_target_qpos)
-        time.sleep(1) # give the robot time to move.
+        time.sleep(ACTION_SLEEP_SEC) # give the robot time to move.
 
         if self.render_mode == "human":
             self.viewer.sync()
@@ -351,6 +350,7 @@ class LiftCubeStateEnv(Env):
             "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].copy().astype(np.float32),
             "ee_pos": self.get_ee_pos().astype(np.float32),
             "real_arm_qpos": np.asarray(self.position_to_radian(self.realrobot.read_position()), dtype=np.float32),
+            "real_arm_bits": np.asarray(self.realrobot.read_position(), dtype=np.float32),
         }
         if self.include_initial_obj_pose:
             observation["initial_obj_pose"] = self.initial_obj_pose.copy().astype(np.float32)
@@ -401,12 +401,11 @@ class LiftCubeStateEnv(Env):
             # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
             robot_qpos = self.initial_joint_pose
             robot_realqpos = self.radian_to_position(robot_qpos)
-            print(f"{robot_realqpos}=================")
+            # print(f"{robot_realqpos}=================")
             # add naive grav comp term
-            robot_realqpos[2] += 30
-            for i in range(5):
-                self.realrobot.set_goal_pos(robot_realqpos)
-                time.sleep(1)
+            robot_realqpos[2] += self.motor_3_bias
+            self.realrobot.set_goal_pos(robot_realqpos)
+            time.sleep(ACTION_SLEEP_SEC)
 
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
@@ -460,7 +459,7 @@ class LiftCubeStateEnv(Env):
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         # info = {'image_front': observation['image_front']}
-        info = {'qpos': self.data.qpos.copy(), 'ee_pos': self.get_ee_pos()}
+        info = {'qpos': self.data.qpos.copy(), 'target_qpos': robot_qpos, 'ee_pos': self.get_ee_pos()}
         return observation, info
 
     def step(self, action):
@@ -500,7 +499,7 @@ class LiftCubeStateEnv(Env):
         # print(f"{msg}: {reward}, {observation['touch'].all()}")
         # penalize closed gripper when not close to the cube.
         is_close = ee_to_cube < 0.05
-        gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] >= -1.5
+        gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] <= 0.7
         gripper_penalty = 0.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
 
         # penalize noisy actions using action norm
@@ -555,23 +554,97 @@ class LiftCubeStateEnv(Env):
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
         return cube_pos.copy()
 
+def plot_joint_positions(target_qpos, sim_qpos, real_qpos):
+    # Assuming target_qpos, sim_qpos, and real_qpos are already defined and populated
+    # Convert lists to numpy arrays for easier indexing
+    target_qpos = np.array(target_qpos)
+    sim_qpos = np.array(sim_qpos)
+    real_qpos = np.array(real_qpos)
+
+    # Number of timesteps
+    timesteps = target_qpos.shape[0]
+
+    # Create a figure with 6 subplots, one for each joint
+    fig, axes = plt.subplots(6, 1, figsize=(10, 15), sharex=True)
+
+    # Plot each joint's position over time
+    for i in range(6):
+        axes[i].plot(range(timesteps), target_qpos[:, i], label='Target', linestyle='--')
+        axes[i].plot(range(timesteps), sim_qpos[:, i], label='Simulated')
+        axes[i].plot(range(timesteps), real_qpos[:, i], label='Real')
+        axes[i].set_ylabel(f'Joint {i+1} Position (rad)')
+        axes[i].legend()
+        axes[i].grid(True)
+
+    # Set the x-axis label for the last subplot
+    axes[-1].set_xlabel('Timestep')
+
+    # Set the main title for the figure
+    fig.suptitle('Joint Positions Over Time')
+
+    # Adjust layout to avoid overlap
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+    # Show the plot
+    plt.savefig("joint_positions.png", dpi=300)
+
+def plot_error_histogram(diff):
+    # Convert list to numpy array for easier indexing
+    diff = np.array(diff)
+
+    # Create a figure with 6 subplots, one for each joint
+    fig, axes = plt.subplots(6, 1, figsize=(10, 15), sharex=True)
+
+    # Plot histogram of errors for each joint
+    for i in range(6):
+        axes[i].hist(diff[:, i], bins=20, alpha=0.75)
+        axes[i].set_ylabel(f'Joint {i+1} Error (rad)')
+        axes[i].grid(True)
+
+    # Set the x-axis label for the last subplot
+    axes[-1].set_xlabel('Error')
+
+    # Set the main title for the figure
+    fig.suptitle('Histogram of Joint Position Errors')
+
+    # Adjust layout to avoid overlap
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+    # Show the plot
+    plt.savefig("joint_position_errors.png", dpi=300)
 
 if __name__ == "__main__":
+    import pickle
+
+    PLOT_JOINT_POSITIONS = False
+    if PLOT_JOINT_POSITIONS:
+        with open('joint_positions.pkl', 'rb') as f:
+            target_qpos, sim_qpos, real_qpos = pickle.load(f)
+        plot_joint_positions(target_qpos, sim_qpos, real_qpos)
+        plot_error_histogram(np.abs(np.array(sim_qpos) - np.array(real_qpos)))
+        exit()
+
+    target_qpos = []
+    sim_qpos = []
+    real_qpos = []
+
     np.set_printoptions(precision=4, suppress=True)
     env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
     # env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
     obs, info = env.reset()
+    target_qpos.append(info["target_qpos"])
+    sim_qpos.append(obs["arm_qpos"])
+    real_qpos.append(obs["real_arm_qpos"])
+
+    goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
+    # goal[2] = 0.01
+    print(f"goal: {goal}")
     print("=" * 80)
     print(f"Real: {obs['real_arm_qpos']}")
     print(f"Sim:  {obs['arm_qpos']}")
     print(f"diff: {np.abs(obs['arm_qpos'] - obs['real_arm_qpos'])}")
     env.render()
-    goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
-    # print(goal)
-    goal = [-0.105, -0.081, 0.01]
-    # print(goal)
-    time.sleep(3)
-    while True:
+    for i in range(15):
         pos = obs["ee_pos"][:3]
         pos_diff = goal - obs["ee_pos"][:3]
         raw_action = np.array([*pos_diff, 0.1])
@@ -582,6 +655,9 @@ if __name__ == "__main__":
         scaled_action = env.get_scaled_action(raw_action)
         obs, reward, term, trunc, info = env.step(scaled_action)
         env.render()
+        target_qpos.append(info["target_qpos"])
+        sim_qpos.append(obs["arm_qpos"])
+        real_qpos.append(obs["real_arm_qpos"])
         print("=" * 80)
         print(f"Real: {obs['real_arm_qpos']}")
         print(f"Sim:  {obs['arm_qpos']}")
@@ -595,4 +671,6 @@ if __name__ == "__main__":
     #     action = env.action_space.sample()
     #     obs, reward, done, info = env.step(action)
     #     env.render()
+    with open('joint_positions.pkl', 'wb') as f:
+        pickle.dump((target_qpos, sim_qpos, real_qpos), f)
     env.close()
