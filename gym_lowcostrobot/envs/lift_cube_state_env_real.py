@@ -19,7 +19,7 @@ DEVICE_NAME='/dev/tty.usbmodem58760435361'
 MOTOR_3_BIAS = 30
 ACTION_SLEEP_SEC = 1.0
 
-class LiftCubeRealEnv(Env):
+class LiftCubeStateEnv(Env):
     """
     ## Description
 
@@ -637,7 +637,7 @@ if __name__ == "__main__":
     real_qpos.append(obs["real_arm_qpos"])
 
     goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
-    # goal[2] = 0.01
+    goal[2] = 0.01
     print(f"goal: {goal}")
     print("=" * 80)
     print(f"Real: {obs['real_arm_qpos']}")
