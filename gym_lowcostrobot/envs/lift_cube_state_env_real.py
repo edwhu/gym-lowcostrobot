@@ -83,6 +83,9 @@ class LiftCubeStateEnv(Env):
         self.motor_3_bias = MOTOR_3_BIAS
         robot_realqpos = self.radian_to_position(self.initial_joint_pose)
         robot_realqpos[2] += self.motor_3_bias
+        self.real_joint_limits_min = [906, 0, 0, 0, 0, 2059]
+        self.real_joint_limits_max = [3202, 4095,4095,4095,4095,2877]
+        robot_realqpos = np.clip(robot_realqpos, self.real_joint_limits_min, self.real_joint_limits_max)
         self.realrobot.set_goal_pos(robot_realqpos)
         # print("bkp 1")
         time.sleep(ACTION_SLEEP_SEC)
@@ -108,7 +111,7 @@ class LiftCubeStateEnv(Env):
         # self.dt: float = 0.002
         # self.model.opt.timestep = self.dt
         self.nb_dof = 6
-        self.control_decimation = 40 # number of simulation steps per control step
+        self.control_decimation = 40 * 12 # number of simulation steps per control step
     
     def _initialize_action_space(self, action_mode):
         # Set the action space
@@ -159,8 +162,12 @@ class LiftCubeStateEnv(Env):
         # Set variables used for the task
         self.threshold_height = 0.07
         ## modified to make the cube generate in the boundaries.
-        self.cube_low = np.array([-0.14, -0.03, 0.01])  # move the cube closer to the robot
-        self.cube_high = np.array([-0.08, 0.03, 0.01])
+        # self.cube_low = np.array([-0.14, -0.03, 0.01])  # move the cube closer to the robot
+        # self.cube_high = np.array([-0.08, 0.03, 0.01])
+
+        # move the cube out of the boundaries
+        self.cube_low = np.array([-2.14, -0.03, 0.01])  # move the cube closer to the robot
+        self.cube_high = np.array([-2.08, 0.03, 0.01])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -282,6 +289,8 @@ class LiftCubeStateEnv(Env):
             # assume actions are relative and normalized to [-1, 1]
             raw_action = self.get_raw_action(action)
             ee_action, gripper_action = raw_action[:3], raw_action[-1]
+            # print('gripper_action', gripper_action)
+            # print('gripper_position', self.radian_to_position([gripper_action]))
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
             # goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
@@ -296,9 +305,9 @@ class LiftCubeStateEnv(Env):
                 site_id,
             )
             target_qpos[-1:] += gripper_action
-            # print(f"{target_qpos}===")
+            # print(f"target_qpos: {target_qpos}")
             target_qpos_real = self.radian_to_position(target_qpos)
-
+            # print(f"target_position: {target_qpos_real}")
 
         elif self.action_mode == "joint":
             # target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
@@ -316,10 +325,13 @@ class LiftCubeStateEnv(Env):
         info = {"target_qpos": target_qpos, "goal_pos": goal_pos}
 
         # Step the simulation forward
+        # for _ in range(12):
         mujoco.mj_step(self.model, self.data, self.control_decimation)
+
         real_robot_target_qpos = target_qpos_real.copy()
         # Set the new position for the real robot with naive grav comp term
         real_robot_target_qpos[2] += self.motor_3_bias
+        real_robot_target_qpos = np.clip(real_robot_target_qpos, self.real_joint_limits_min, self.real_joint_limits_max)
         self.realrobot.set_goal_pos(real_robot_target_qpos)
         time.sleep(ACTION_SLEEP_SEC) # give the robot time to move.
 
@@ -404,6 +416,7 @@ class LiftCubeStateEnv(Env):
             # print(f"{robot_realqpos}=================")
             # add naive grav comp term
             robot_realqpos[2] += self.motor_3_bias
+            robot_realqpos = np.clip(robot_realqpos, self.real_joint_limits_min, self.real_joint_limits_max)
             self.realrobot.set_goal_pos(robot_realqpos)
             time.sleep(ACTION_SLEEP_SEC)
 
@@ -644,6 +657,8 @@ if __name__ == "__main__":
     print(f"Sim:  {obs['arm_qpos']}")
     print(f"diff: {np.abs(obs['arm_qpos'] - obs['real_arm_qpos'])}")
     env.render()
+    gripper_actions = np.ones(15) * 1
+    gripper_actions[5:] = -1
     for i in range(15):
         pos = obs["ee_pos"][:3]
         pos_diff = goal - obs["ee_pos"][:3]
@@ -653,6 +668,7 @@ if __name__ == "__main__":
         # action is [dx, dy, dz, gripper]
         # and is normalized to [-1, 1]
         scaled_action = env.get_scaled_action(raw_action)
+        scaled_action[-1] = gripper_actions[i]
         obs, reward, term, trunc, info = env.step(scaled_action)
         env.render()
         target_qpos.append(info["target_qpos"])
