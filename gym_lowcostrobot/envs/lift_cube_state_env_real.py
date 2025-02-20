@@ -16,8 +16,8 @@ from gym_lowcostrobot.envs.robot import Robot
 
 # DEVICE_NAME='/dev/ttyACM0'
 DEVICE_NAME='/dev/tty.usbmodem58760435361'
-MOTOR_3_BIAS = 30
-ACTION_SLEEP_SEC = 1.0
+MOTOR_3_BIAS = 10
+ACTION_SLEEP_SEC = 0.1
 
 class LiftCubeStateEnv(Env):
     """
@@ -645,6 +645,9 @@ if __name__ == "__main__":
     env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
     # env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
     obs, info = env.reset()
+    while True:
+        env.render()
+
     target_qpos.append(info["target_qpos"])
     sim_qpos.append(obs["arm_qpos"])
     real_qpos.append(obs["real_arm_qpos"])
