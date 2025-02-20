@@ -65,7 +65,7 @@ class LiftCubeStateEnv(Env):
         self._initialize_observation_space(observation_mode, include_initial_obj_pose)
         self._initialize_renderer(render_mode, render_obs)
         self._initialize_task_variables(use_action_noise)
-    
+
     def _initialize_mujoco(self):
         # Load the MuJoCo model and data
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
@@ -80,7 +80,7 @@ class LiftCubeStateEnv(Env):
         # self.model.opt.timestep = self.dt
         self.nb_dof = 6
         self.control_decimation = 40 # number of simulation steps per control step
-    
+
     def _initialize_action_space(self, action_mode):
         # Set the action space
         self.action_mode = action_mode
@@ -112,7 +112,7 @@ class LiftCubeStateEnv(Env):
             self.renderer = mujoco.Renderer(self.model, height=256, width=256)
 
         self.observation_space = gym.spaces.Dict(self.observation_subspaces)
-    
+
     def _initialize_renderer(self, render_mode, render_obs):
         # Set the render utilities
         self.render_obs = render_obs
@@ -125,7 +125,7 @@ class LiftCubeStateEnv(Env):
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
         elif self.render_mode == "rgb_array":
             self.rgb_array_renderer = mujoco.Renderer(self.model, height=64, width=64)
-    
+
     def _initialize_task_variables(self, use_action_noise):
         # Set variables used for the task
         self.threshold_height = 0.06
@@ -147,8 +147,8 @@ class LiftCubeStateEnv(Env):
             # add onto data.ctrl, range is in radians
             "joint_ctrl_min": np.array([-0.001] * 6),
             "joint_ctrl_max": np.array([0.001] * 6),
-            "action_min": np.array([-0.005, -0.005, -0.005, -0.000001]),
-            "action_max": np.array([0.005, 0.005, 0.005, 0.000001]),
+            "action_min": np.array([-0.001, -0.001, -0.001, -0.000001]),
+            "action_max": np.array([0.001, 0.001, 0.001, 0.000001]),
 
         }
         if not use_action_noise:
@@ -284,7 +284,7 @@ class LiftCubeStateEnv(Env):
 
         # Set the target position
         ctrl_noise = self.np_random.uniform(self._dr_noise["joint_ctrl_min"], self._dr_noise["joint_ctrl_max"]) # then add low level control noise.
-        self.data.ctrl = target_qpos + ctrl_noise 
+        self.data.ctrl = target_qpos + ctrl_noise
 
         info = {"target_qpos": target_qpos, "goal_pos": goal_pos}
 
@@ -300,7 +300,7 @@ class LiftCubeStateEnv(Env):
         raw_action = np.clip(raw_action, self.action_min, self.action_max)
         scaled_action = (raw_action - self.action_min) / (self.action_max - self.action_min) * (scaled_max - scaled_min) + scaled_min
         return scaled_action
-    
+
     def get_raw_action(self, scaled_action):
         # go from (-1, 1) actions to raw action space
         scaled_min, scaled_max = -1, 1
@@ -356,7 +356,7 @@ class LiftCubeStateEnv(Env):
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed, options=options)
-        
+
         if options is None:
             # Reset the robot to the initial position and sample the cube position
             cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
@@ -375,7 +375,7 @@ class LiftCubeStateEnv(Env):
         else:
             self.data.qpos = options["qpos"].copy()
             self.data.qvel = options["qvel"].copy()
-        
+
         if self.include_initial_obj_pose:
             self.initial_obj_pose = self.data.qpos[self.cube_dof_id:self.cube_dof_id+7].copy()
 
@@ -414,7 +414,7 @@ class LiftCubeStateEnv(Env):
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
-        
+
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         # info = {'image_front': observation['image_front']}
@@ -501,7 +501,7 @@ class LiftCubeStateEnv(Env):
         for renderer in ["viewer", "renderer", "rgb_array_renderer"]:
             if hasattr(self, renderer):
                 getattr(self, renderer).close()
-    
+
     def get_ee_pos(self):
         ee_id = self.model.site("end_effector").id
         ee_pos = np.array([0.0, 0.0, 0.0, 0.0])
@@ -523,7 +523,7 @@ class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
         if "log_image_front" in self.observation_subspaces:
             self.observation_subspaces["log/image_front"] = self.observation_subspaces.pop("log_image_front")
         self.observation_space = gym.spaces.Dict(self.observation_subspaces)
-    
+
     def observation(self, observation):
         # pop everything except for keys in self.observation_space
         new_observation = {k: v for k, v in observation.items() if k in self.observation_space.spaces.keys()}
@@ -531,11 +531,11 @@ class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
         if "log_image_front" in observation and "log/image_front" in self.observation_space.spaces.keys():
             new_observation["log/image_front"] = observation.pop("log_image_front")
         return new_observation
-    
+
     def reset(self, seed=None, options=None):
         observation, info = super().reset(seed=seed, options=options)
         return self.observation(observation), info
-    
+
     def step(self, action):
         observation, reward, terminated, truncated, info = super().step(action)
         return self.observation(observation), reward, terminated, truncated, info
