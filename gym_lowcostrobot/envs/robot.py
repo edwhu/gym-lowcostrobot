@@ -18,12 +18,15 @@ class Robot:
     J2_I_GAIN = 0
     J2_D_GAIN = 15
 
+    J3_P_GAIN = 900
+
     J2_H_OFFSET = 0
 
     # P_GAIN_ADDR = 84
     # I_GAIN_ADDR = 82
     # D_GAIN_ADDR = 80
     # def __init__(self, device_name: str, baudrate=1_000_000, servo_ids=[1, 2, 3, 4, 5]):
+    ### now the read includes the position of the finger joint, previously the ids are only up to 5
     def __init__(self, dynamixel, baudrate=1_000_000, servo_ids=[1, 2, 3, 4, 5, 6]):
         self.servo_ids = servo_ids
         self.dynamixel = dynamixel
@@ -74,7 +77,8 @@ class Robot:
             if tries > 0:
                 return self.read_position(tries=tries - 1)
             else:
-                print(f'failed to read position!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+                raise Exception(f'FAILED TO READ POSITION')
+                # print(f'failed to read position!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
         positions = []
         for id in self.servo_ids:
             position = self.position_reader.getData(id, ReadAttribute.POSITION.value, 4)
@@ -186,6 +190,8 @@ class Robot:
         self.dynamixel.packetHandler.write2ByteTxRx(self.dynamixel.portHandler, 3, 84, self.J2_P_GAIN)  # Address 84 for P gain
         self.dynamixel.packetHandler.write2ByteTxRx(self.dynamixel.portHandler, 3, 82, self.J2_I_GAIN)  # Address 82 for I gain
         self.dynamixel.packetHandler.write2ByteTxRx(self.dynamixel.portHandler, 3, 80, self.J2_D_GAIN)  # Address 80 for D gain
+        
+        self.dynamixel.packetHandler.write2ByteTxRx(self.dynamixel.portHandler, 4, 84, self.J3_P_GAIN)  # Address 84 for P gain
 
         self.dynamixel.packetHandler.write2ByteTxRx(self.dynamixel.portHandler, 3, 80, self.J2_H_OFFSET)  # Address 20 for Homing Offset
 
