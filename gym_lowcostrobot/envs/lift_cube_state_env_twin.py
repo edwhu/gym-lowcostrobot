@@ -18,7 +18,7 @@ from gym_lowcostrobot.envs.robot import Robot
 # DEVICE_NAME='/dev/tty.usbmodem58760435361'
 # DEVICE_NAME='/dev/tty.usbmodem585A0085321'
 MOTOR_3_BIAS = 30
-ACTION_SLEEP_SEC = 0.1
+ACTION_SLEEP_SEC = 1.0
 
 class LiftCubeStateEnv(Env):
     """
@@ -83,16 +83,16 @@ class LiftCubeStateEnv(Env):
         DEVICE_NAME = os.environ['KOCH_DEVICE_NAME']
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
-        self.initial_joint_pose = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.000088])
+        self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.000088])
         self.motor_3_bias = MOTOR_3_BIAS
-        robot_realqpos = self.radian_to_position(self.initial_joint_pose)
-        robot_realqpos[2] += self.motor_3_bias
-        self.real_joint_limits_min = [906, 0, 0, 0, 0, 2059]
-        self.real_joint_limits_max = [3202, 4095,4095,4095,4095,2877]
+        real_qpos = self.radian_to_position(self.initial_qpos)
+        real_qpos[2] += self.motor_3_bias
+        self.real_qpos_min = [906, 0, 0, 0, 0, 2059]
+        self.real_qpos_max = [3202, 4095,4095,4095,4095,2877]
         # self.real_joint_limits_min = [0, 0, 0, 0, 0, 0]
         # self.real_joint_limits_max = [4095, 4095,4095,4095,4095,4095]
-        robot_realqpos = np.clip(robot_realqpos, self.real_joint_limits_min, self.real_joint_limits_max)
-        self.realrobot.set_goal_pos(robot_realqpos)
+        real_qpos = np.clip(real_qpos, self.real_qpos_min, self.real_qpos_max)
+        self.realrobot.set_goal_pos(real_qpos)
         # print("bkp 1")
         time.sleep(ACTION_SLEEP_SEC)
 
@@ -132,11 +132,8 @@ class LiftCubeStateEnv(Env):
         # Set the observations space
         self.observation_mode = observation_mode
         self.observation_subspaces = {
-            "qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(13,)),
-            "qvel": spaces.Box(low=-np.inf, high=np.inf, shape=(12,)),
-            "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
-            "touch": spaces.Box(low=-10.0, high=10.0, shape=(2,)),
             "arm_qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
+            "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
             "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
         }
         self.include_initial_obj_pose = include_initial_obj_pose
@@ -241,6 +238,7 @@ class LiftCubeStateEnv(Env):
         - nullspace EE mode: [dx, dy, dz, gripper]
         - Joint mode: [q1, q2, q3, q4, q5, q6, gripper]
         """
+        info = {}
         if self.action_mode == "nullspace":
             assert action.min() >= -1.0 and action.max() <= 1.0
             # assume actions are relative and normalized to [-1, 1]
@@ -250,6 +248,9 @@ class LiftCubeStateEnv(Env):
             # print('gripper_position', self.radian_to_position([gripper_action]))
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
+            # clamp goal position so the z value is at least 1cm.
+            goal_pos[2] = max(goal_pos[2], 0.01)
+
             # goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
             goal_quat = np.array([0.5, 0.5, 0.5, 0.5]) # rotate 90 on x axis to make gripper point downwards
 
@@ -266,7 +267,7 @@ class LiftCubeStateEnv(Env):
             # import ipdb; ipdb.set_trace()
             # print(target_qpos[-1:], gripper_action)
             target_qpos[-1:] += gripper_action
-            target_qpos_real = self.radian_to_position(target_qpos)
+            target_real_qpos = self.radian_to_position(target_qpos)
 
         elif self.action_mode == "joint":
             # target_low = np.array([-3.14159, -1.5708, -1.48353, -1.91986, -2.96706, -1.74533])
@@ -276,22 +277,16 @@ class LiftCubeStateEnv(Env):
         else:
             raise ValueError("Invalid action mode, must be 'nullspace' or 'joint'")
 
-
-        # Set the target position
-        # ctrl_noise = np.random.uniform(self._dr_noise["joint_ctrl_min"], self._dr_noise["joint_ctrl_max"]) # then add low level control noise.
-        # self.data.ctrl = target_qpos + ctrl_noise 
-        # Step the simulation forward
-        # mujoco.mj_step(self.model, self.data, self.control_decimation)
-        info = {"target_qpos": target_qpos, "goal_pos": goal_pos}
-
-        real_robot_target_qpos = target_qpos_real.copy()
         # Set the new position for the real robot with naive grav comp term
-        real_robot_target_qpos[2] += self.motor_3_bias
-        real_robot_target_qpos = np.clip(real_robot_target_qpos, self.real_joint_limits_min, self.real_joint_limits_max)
-        self.realrobot.set_goal_pos(real_robot_target_qpos)
+        target_real_qpos[2] += self.motor_3_bias
+        target_real_qpos = np.clip(target_real_qpos, self.real_qpos_min, self.real_qpos_max)
+        self.realrobot.set_goal_pos(target_real_qpos)
         time.sleep(ACTION_SLEEP_SEC) # give the robot time to move.
-        info["real_robot_target_qpos"] = np.array(self.position_to_radian(real_robot_target_qpos), dtype=np.float32)
-
+        info = {
+            'goal_pos': goal_pos, # the goal eef position (xyz)
+            'target_qpos': target_qpos, # the target joint positions from IK in radians
+            'target_real_qpos': target_real_qpos, # the target joint positions in dynamixel units
+        }
         if self.render_mode == "human":
             self.viewer.sync()
         return info
@@ -314,50 +309,26 @@ class LiftCubeStateEnv(Env):
         # qpos is [x, y, z, qw, qx, qy, qz, q1, q2, q3, q4, q5, q6, gripper]
         # qvel is [vx, vy, vz, wx, wy, wz, dq1, dq2, dq3, dq4, dq5, dq6, dgripper]
         try:
-            real_arm_position = np.asarray(self.realrobot.read_position(), dtype=np.float32)
-            real_arm_qpos = np.array(self.position_to_radian(real_arm_position), dtype=np.float32)
+            real_qpos = np.asarray(self.realrobot.read_position(), dtype=np.float32)
+            qpos = np.array(self.position_to_radian(real_qpos), dtype=np.float32)
         except Exception as e: 
             print(f"Failed to read position:, using last known and valid position")
-            real_arm_qpos = np.array(self.last_robot_qpos.copy(), dtype=np.float32)
-            real_arm_position = self.radian_to_position(real_arm_qpos)
+            qpos = np.array(self.last_qpos.copy(), dtype=np.float32)
+            real_qpos = self.radian_to_position(qpos)
 
         # if positions are all within the limits, then cache them
-        if np.all(real_arm_position >= self.real_joint_limits_min) and np.all(real_arm_position <= self.real_joint_limits_max):
-            self.last_robot_qpos = self.position_to_radian(real_arm_position)
+        if np.all(real_qpos >= self.real_qpos_min) and np.all(real_qpos <= self.real_qpos_max):
+            self.last_qpos = self.position_to_radian(real_qpos)
+
+            # set the sim robot qpos to the real robot qpos
+            self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = qpos
+            self.data.qvel[:] = 0
+            mujoco.mj_forward(self.model, self.data)
 
         observation = {
-            "qpos": self.data.qpos.copy().astype(np.float32),
-            "qvel": self.data.qvel.copy().astype(np.float32),
-            "arm_qpos": self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].copy().astype(np.float32),
-            "ee_pos": self.get_ee_pos().astype(np.float32),
-            "real_arm_qpos": real_arm_qpos,
-            "real_arm_position": real_arm_position, 
+            "arm_qpos": qpos,
+            "ee_pos": self.get_ee_pos(),
         }
-        if self.include_initial_obj_pose:
-            observation["initial_obj_pose"] = self.initial_obj_pose.copy().astype(np.float32)
-
-        touch_left_finger = False
-        touch_right_finger = False
-        obj = "cube"
-        l_finger_geom_id = self.model.geom("link_6_pad").id
-        r_finger_geom_id = self.model.geom("link_5_pad").id
-        for j in range(self.data.ncon):
-            c = self.data.contact[j]
-            body1 = self.model.geom_bodyid[c.geom1]
-            body2 = self.model.geom_bodyid[c.geom2]
-            body1_name = self.model.body(body1).name
-            body2_name = self.model.body(body2).name
-
-            if c.geom1 == l_finger_geom_id and body2_name == obj:
-                touch_left_finger = True
-            if c.geom2 == l_finger_geom_id and body1_name == obj:
-                touch_left_finger = True
-
-            if c.geom1 == r_finger_geom_id and body2_name == obj:
-                touch_right_finger = True
-            if c.geom2 == r_finger_geom_id and body1_name == obj:
-                touch_right_finger = True
-        observation["touch"] = np.array([int(touch_left_finger), int(touch_right_finger)]).astype(np.float32)
 
         if self.observation_mode in ["image", "both"]:
             if self.render_obs:
@@ -380,25 +351,25 @@ class LiftCubeStateEnv(Env):
             # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
             #### CHANGING THIS POSITION IN WHAT WAS USED IN REAL ROBOT TESTING
             # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
-            robot_qpos = self.initial_joint_pose
-            robot_realqpos = self.radian_to_position(robot_qpos)
-            # print(f"{robot_realqpos}=================")
+            qpos = self.initial_qpos
+            real_qpos = self.radian_to_position(qpos)
+
             # add naive grav comp term
-            robot_realqpos[2] += self.motor_3_bias
-            robot_realqpos = np.clip(robot_realqpos, self.real_joint_limits_min, self.real_joint_limits_max)
-            self.realrobot.set_goal_pos(robot_realqpos)
+            real_qpos[2] += self.motor_3_bias
+            real_qpos = np.clip(real_qpos, self.real_qpos_min, self.real_qpos_max)
+            self.realrobot.set_goal_pos(real_qpos)
             time.sleep(ACTION_SLEEP_SEC)
             try:
-                real_arm_position = self.realrobot.read_position()
-                robot_qpos = np.asarray(self.position_to_radian(real_arm_position), dtype=np.float32)
+                real_qpos = self.realrobot.read_position()
+                qpos = np.asarray(self.position_to_radian(real_qpos), dtype=np.float32)
             except Exception as e:
                 print(f"Reset: Failed to read position: {e}")
                 raise e
-            self.last_robot_qpos = np.asarray(robot_qpos.copy(), dtype=np.float32)
+            self.last_qpos = np.asarray(qpos.copy(), dtype=np.float32)
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
             #     1.64550541e+00, -1.30162992e+00])
-            self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
+            self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = qpos
             self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
             self.data.qvel[:] = 0
         else:
@@ -416,7 +387,7 @@ class LiftCubeStateEnv(Env):
 
         # Integration timestep in seconds. This corresponds to the amount of time the joint
         # velocities will be integrated for to obtain the desired joint positions.
-        self.integration_dt: float = 0.1
+        self.integration_dt: float = 1.0
 
         # Damping term for the pseudoinverse. This is used to prevent joint velocities from
         # becoming too large when the Jacobian is close to singular.
@@ -424,14 +395,18 @@ class LiftCubeStateEnv(Env):
 
         # Gains for the twist computation. These should be between 0 and 1. 0 means no
         # movement, 1 means move the end-effector to the target in one integration step.
-        self.Kpos: float = 0.95
-        self.Kori: float = 0.95
+        # self.Kpos: float = 0.95
+        # self.Kori: float = 0.95
+        self.Kpos: float = 1.0
+        self.Kori: float = 1.0
 
         # Nullspace P gain.
         self.Kn = np.asarray([10.0, 10.0, 10.0, 10.0, 10.0, 0.0])
+        self.Kn *= 100
 
         # Maximum allowable joint velocity in rad/s.
-        self.max_angvel = 0.785
+        # self.max_angvel = 0.785
+        self.max_angvel = 100
 
         self.jac = np.zeros((6, 6))
         self.diag = self.damping * np.eye(6)
@@ -447,8 +422,12 @@ class LiftCubeStateEnv(Env):
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         # info = {'image_front': observation['image_front']}
-        info = {'qpos': self.data.qpos.copy(), 'target_qpos': robot_qpos, 'ee_pos': self.get_ee_pos()}
-        info['real_robot_target_qpos'] = robot_qpos
+        # info = {'qpos': self.data.qpos.copy(), 'target_qpos': real_qpos, 'ee_pos': self.get_ee_pos()}
+        # info['real_robot_target_qpos'] = real_qpos
+        info = {
+            'qpos': qpos,
+            'real_qpos': real_qpos,
+        }
         return observation, info
 
     def step(self, action):
@@ -456,13 +435,6 @@ class LiftCubeStateEnv(Env):
         action_info = self.apply_action(action)
         # Get the new observation
         observation = self.get_observation()
-        print(f"real target_qpos: {action_info['real_robot_target_qpos']}")
-        print(f"real_arm_qpos: {observation['real_arm_qpos']}")
-
-        # set the sim robot qpos to the real robot qpos
-        self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = observation['real_arm_qpos'].copy()
-        self.data.qvel[:] = 0
-        mujoco.mj_forward(self.model, self.data)
 
         # TODO: figure out the reward function
         reward = 0 
@@ -524,7 +496,8 @@ if __name__ == "__main__":
     pos_sensitivity = 0.2
     gripper_sensitivity = 1.0
     obs, info = env.reset()
-    print(f"real target_qpos: {info['real_robot_target_qpos']}")
+    # print(f"qpos: {info['qpos']}")
+    print(f"eef pos: {obs['ee_pos']}")
     env.render()
     while True:
         raw_key = input("Enter action: ")
@@ -533,7 +506,9 @@ if __name__ == "__main__":
             action[:3] *= pos_sensitivity
             action[-1] *= gripper_sensitivity
             obs, reward, terminated, truncated, info = env.step(action)
-            print(f"Reward: {reward}")
+            print(f"goal pos: {info['goal_pos']}")
+            print(f"eef pos: {obs['ee_pos']}")
+            # print(f"Reward: {reward}")
             env.render()
         else:
             break
