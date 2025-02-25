@@ -1,5 +1,6 @@
 import os
 import time
+from collections import deque
 
 import gymnasium as gym
 from gymnasium import Env, spaces
@@ -78,22 +79,23 @@ class LiftCubeStateEnv(Env):
         self._initialize_task_variables(use_action_noise)
     
     def _initialize_dynamixel(self):
+        self.real_qpos_min = [906, 0, 0, 0, 0, 2040] # you may need to tune per robot
+        self.real_qpos_max = [3202, 4095,4095,4095,4095,2877]
+        self.qpos_min = self.position_to_radian(self.real_qpos_min)
+        self.qpos_max = self.position_to_radian(self.real_qpos_max)
         if 'KOCH_DEVICE_NAME' not in os.environ:
             raise ValueError("Please set the KOCH_DEVICE_NAME environment variable to the serial port of the Dynamixel device")
         DEVICE_NAME = os.environ['KOCH_DEVICE_NAME']
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
-        self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.000088])
+        self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.012])
+        assert np.all(self.initial_qpos >= self.qpos_min) and np.all(self.initial_qpos <= self.qpos_max)
+
         self.motor_3_bias = MOTOR_3_BIAS
         real_qpos = self.radian_to_position(self.initial_qpos)
         real_qpos[2] += self.motor_3_bias
-        self.real_qpos_min = [906, 0, 0, 0, 0, 2059]
-        self.real_qpos_max = [3202, 4095,4095,4095,4095,2877]
-        # self.real_joint_limits_min = [0, 0, 0, 0, 0, 0]
-        # self.real_joint_limits_max = [4095, 4095,4095,4095,4095,4095]
         real_qpos = np.clip(real_qpos, self.real_qpos_min, self.real_qpos_max)
         self.realrobot.set_goal_pos(real_qpos)
-        # print("bkp 1")
         time.sleep(ACTION_SLEEP_SEC)
 
     def radian_to_position(self, values):
@@ -190,6 +192,10 @@ class LiftCubeStateEnv(Env):
         if not use_action_noise:
             self._dr_noise = {k: np.zeros_like(v) for k, v in self._dr_noise.items()}
 
+        # workspace bounds for the ee 
+        self.ee_min = np.array([-0.15, -0.04, 0.012])
+        self.ee_max = np.array([-0.07, 0.04, 0.1])
+
     def diffik_nullspace(
         self,
         goal_pos,
@@ -248,8 +254,8 @@ class LiftCubeStateEnv(Env):
             # print('gripper_position', self.radian_to_position([gripper_action]))
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
-            # clamp goal position so the z value is at least 1cm.
-            goal_pos[2] = max(goal_pos[2], 0.01)
+            # clip the goal pos to ee bounds
+            goal_pos = np.clip(goal_pos, self.ee_min, self.ee_max)
 
             # goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
             goal_quat = np.array([0.5, 0.5, 0.5, 0.5]) # rotate 90 on x axis to make gripper point downwards
@@ -286,6 +292,7 @@ class LiftCubeStateEnv(Env):
             'goal_pos': goal_pos, # the goal eef position (xyz)
             'target_qpos': target_qpos, # the target joint positions from IK in radians
             'target_real_qpos': target_real_qpos, # the target joint positions in dynamixel units
+            'raw_action': raw_action, # the action converted into metric space
         }
         if self.render_mode == "human":
             self.viewer.sync()
@@ -319,11 +326,15 @@ class LiftCubeStateEnv(Env):
         # if positions are all within the limits, then cache them
         if np.all(real_qpos >= self.real_qpos_min) and np.all(real_qpos <= self.real_qpos_max):
             self.last_qpos = self.position_to_radian(real_qpos)
+        else:
+            print(f"Real robot qpos out of bounds: {real_qpos} ")
+            print(f"You may need to tune the real_qpos_min and real_qpos_max values")
+            qpos = np.clip(qpos, self.real_qpos_min, self.real_qpos_max)
 
-            # set the sim robot qpos to the real robot qpos
-            self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = qpos
-            self.data.qvel[:] = 0
-            mujoco.mj_forward(self.model, self.data)
+        # set the sim robot qpos to the real robot qpos
+        self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = qpos
+        self.data.qvel[:] = 0
+        mujoco.mj_forward(self.model, self.data)
 
         observation = {
             "arm_qpos": qpos,
@@ -428,24 +439,44 @@ class LiftCubeStateEnv(Env):
             'qpos': qpos,
             'real_qpos': real_qpos,
         }
+        # for telling if the object is in the hand.
+        self.gripper_history = deque(maxlen=4)
+        self.gripper_history.append(False)
         return observation, info
 
     def step(self, action):
         # Perform the action and step the simulation
+        gripper_before_action = self.last_qpos[-1]
         action_info = self.apply_action(action)
+        gripper_displacement = action_info['raw_action'][-1]
         # Get the new observation
         observation = self.get_observation()
+        gripper_after_action = observation['arm_qpos'][-1]  
 
-        # TODO: figure out the reward function
-        reward = 0 
-        terminated = False
+        # Check if the gripper is holding the object, by comparing the expected gripper position
+        # after the action and the actual gripper position after the action.
+        expected_gripper_pos = gripper_before_action + gripper_displacement
+        # clip the expected gripper pos to the limits
+        expected_gripper_pos = np.clip(expected_gripper_pos, self.qpos_min[-1], self.qpos_max[-1])
+        gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.1
+        # print('gripper before action', gripper_before_action)
+        # print('gripper displacement', gripper_displacement)
+        # print('gripper after action', gripper_after_action)
+        # print('expected gripper pos', expected_gripper_pos)
+        print('gripper blocked', gripper_blocked)
+
+        success = gripper_blocked and observation['ee_pos'][2] >= 0.07
+
+        reward = float(success) 
+        terminated = success
+        truncated = False
         info = {}
 
         info["qpos"] = self.data.qpos.copy()
         info["qvel"] = self.data.qvel.copy()
         info.update(action_info)
 
-        return observation, reward, terminated, False, info
+        return observation, reward, terminated, truncated, info
 
 
     def render(self):
@@ -489,9 +520,8 @@ if __name__ == "__main__":
         'd': np.array([0.0, 1.0, 0.0, 0.0]),
         'q': np.array([0.0, 0.0, 1.0, 0.0]),
         'e': np.array([0.0, 0.0, -1.0, 0.0]),
-        # close / open gripper actions
-        'z': np.array([0.0, 0.0, 0.0, 1.0]),
-        'x': np.array([0.0, 0.0, 0.0, -1.0]),
+        'z': np.array([0.0, 0.0, 0.0, 1.0]), # close gripper
+        'x': np.array([0.0, 0.0, 0.0, -1.0]),# open gripper
     }
     pos_sensitivity = 0.2
     gripper_sensitivity = 1.0
@@ -510,6 +540,9 @@ if __name__ == "__main__":
             print(f"eef pos: {obs['ee_pos']}")
             # print(f"Reward: {reward}")
             env.render()
+            if terminated:
+                print("Terminated")
+                break
         else:
             break
     env.close()
