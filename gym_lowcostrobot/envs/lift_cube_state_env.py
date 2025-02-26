@@ -87,8 +87,8 @@ class LiftCubeStateEnv(Env):
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
         # used for bounding the nullspace controller
-        self.action_min = np.array([-0.1, -0.1, -0.1, -11.0])
-        self.action_max = np.array([0.1, 0.1, 0.1, 2.0])
+        self.action_min = np.array([-0.1, -0.1, -0.1, -0.6])
+        self.action_max = np.array([0.1, 0.1, 0.1, 0.6])
 
     def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         # Set the observations space
@@ -154,54 +154,14 @@ class LiftCubeStateEnv(Env):
         if not use_action_noise:
             self._dr_noise = {k: np.zeros_like(v) for k, v in self._dr_noise.items()}
 
+        # taken from the real env
+        self.qpos_min = np.array([-1.7505787545787546, -3.14, -3.14, -3.14, -3.14, -0.011501831501831372])
+        self.qpos_max = np.array([1.770515262515263, 3.14, 3.14, 3.14, 3.14, 1.2721025641025645])
 
+        # workspace bounds for the ee 
+        self.ee_min = np.array([-0.15, -0.04, 0.012])
+        self.ee_max = np.array([-0.07, 0.04, 0.1])
 
-    def inverse_kinematics(self, ee_target_pos, step=0.2, joint_name="end_effector", nb_dof=6, regularization=1e-6):
-        """
-        Computes the inverse kinematics for a robotic arm to reach the target end effector position.
-
-        :param ee_target_pos: numpy array of target end effector position [x, y, z]
-        :param step: float, step size for the iteration
-        :param joint_name: str, name of the end effector joint
-        :param nb_dof: int, number of degrees of freedom
-        :param regularization: float, regularization factor for the pseudoinverse computation
-        :return: numpy array of target joint positions
-        """
-        try:
-            # Get the site ID from the name
-            site_id = self.model.site(joint_name).id
-        except KeyError:
-            raise ValueError(f"Site name '{joint_name}' not found in the model.")
-
-        # Get the current end effector position from the site
-        ee_pos = self.data.site_xpos[site_id]
-
-        # Compute the Jacobian for the end effector site
-        jac = np.zeros((3, self.model.nv))
-        mujoco.mj_jacSite(self.model, self.data, jac, None, site_id)
-
-        # Compute the difference between target and current end effector positions
-        delta_pos = ee_target_pos - ee_pos
-
-        # Compute the pseudoinverse of the Jacobian with regularization
-        jac_reg = jac[:, :nb_dof].T @ jac[:, :nb_dof] + regularization * np.eye(nb_dof)
-        jac_pinv = np.linalg.inv(jac_reg) @ jac[:, :nb_dof].T
-
-        # Compute target joint velocities
-        qdot = jac_pinv @ delta_pos
-
-        # Normalize joint velocities to avoid excessive movements
-        qdot_norm = np.linalg.norm(qdot)
-        if qdot_norm > 1.0:
-            qdot /= qdot_norm
-
-        # Read the current joint positions
-        qpos = self.data.qpos[self.arm_dof_id:self.arm_dof_id + nb_dof]
-
-        # Compute the new joint positions
-        q_target_pos = qpos + qdot * step
-
-        return q_target_pos
 
     def diffik_nullspace(
         self,
@@ -260,6 +220,9 @@ class LiftCubeStateEnv(Env):
             ee_action, gripper_action = raw_action[:3], raw_action[-1]
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
+            # clip the goal pos to ee bounds
+            goal_pos = np.clip(goal_pos, self.ee_min, self.ee_max)
+
             goal_quat = np.array([0.5, 0.5, 0.5, 0.5]) # keep the orientation of the end effector fixed
             # goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
 
@@ -286,7 +249,7 @@ class LiftCubeStateEnv(Env):
         ctrl_noise = self.np_random.uniform(self._dr_noise["joint_ctrl_min"], self._dr_noise["joint_ctrl_max"]) # then add low level control noise.
         self.data.ctrl = target_qpos + ctrl_noise 
 
-        info = {"target_qpos": target_qpos, "goal_pos": goal_pos}
+        info = {"target_qpos": target_qpos, "goal_pos": goal_pos, 'raw_action': raw_action}
 
         # Step the simulation forward
         mujoco.mj_step(self.model, self.data, self.control_decimation)
@@ -365,10 +328,10 @@ class LiftCubeStateEnv(Env):
             #### CHANGING THIS POSITION IN WHAT WAS USED IN REAL ROBOT TESTING
             # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
             robot_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
-
             # Set a better resting position initially
             # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
             #     1.64550541e+00, -1.30162992e+00])
+            assert np.all(robot_qpos >= self.qpos_min) and np.all(robot_qpos <= self.qpos_max)
             self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = robot_qpos
             self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
             self.data.qvel[:] = 0
@@ -387,7 +350,7 @@ class LiftCubeStateEnv(Env):
 
         # Integration timestep in seconds. This corresponds to the amount of time the joint
         # velocities will be integrated for to obtain the desired joint positions.
-        self.integration_dt: float = 0.1
+        self.integration_dt: float = 1.0
 
         # Damping term for the pseudoinverse. This is used to prevent joint velocities from
         # becoming too large when the Jacobian is close to singular.
@@ -395,14 +358,15 @@ class LiftCubeStateEnv(Env):
 
         # Gains for the twist computation. These should be between 0 and 1. 0 means no
         # movement, 1 means move the end-effector to the target in one integration step.
-        self.Kpos: float = 0.95
-        self.Kori: float = 0.95
+        self.Kpos: float = 1.0
+        self.Kori: float = 1.0
 
         # Nullspace P gain.
         self.Kn = np.asarray([10.0, 10.0, 10.0, 10.0, 10.0, 0.0])
+        self.Kn *= 100
 
         # Maximum allowable joint velocity in rad/s.
-        self.max_angvel = 0.785
+        self.max_angvel = 100
 
         self.jac = np.zeros((6, 6))
         self.diag = self.damping * np.eye(6)
@@ -542,31 +506,66 @@ class LiftCubeStateDreamerV4Env(LiftCubeStateEnv):
 
 
 if __name__ == "__main__":
-    # np.set_printoptions(precision=3, suppress=True)
-    env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
-    # env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
-    obs, info = env.reset()
-    env.render()
-    goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
-    print(goal)
-    goal = [-0.105, 0.081, 0.05]
-    print(goal)
-    while True:
-        pos = obs["ee_pos"][:3]
-        pos_diff = goal - obs["ee_pos"][:3]
-        raw_action = np.array([*pos_diff, 0.0])
-        # print(raw_action, end="\r")
-        #print(pos_diff)
-        print(pos)
-        # action is [dx, dy, dz, gripper]
-        # and is normalized to [-1, 1]
-        scaled_action = env.get_scaled_action(raw_action)
-        obs, reward, term, trunc, info = env.step(scaled_action)
-        env.render()
-        # print(f"goal:{info['goal_pos']}, pos: {obs['ee_pos'][:3]}, abs diff per dim: {np.abs(info['goal_pos'] - obs['ee_pos'][:3])}")
-    # env.reset()
-    # for _ in range(1000):
-    #     action = env.action_space.sample()
-    #     obs, reward, done, info = env.step(action)
+    # # np.set_printoptions(precision=3, suppress=True)
+    # env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
+    # # env = LiftCubeStateDreamerV4Env(observation_mode="both",render_mode="human")
+    # obs, info = env.reset()
+    # env.render()
+    # goal = info['ee_pos'][:3] # let's have the robot keep its hand in the reset position.
+    # print(goal)
+    # goal = [-0.105, 0.081, 0.05]
+    # print(goal)
+    # while True:
+    #     pos = obs["ee_pos"][:3]
+    #     pos_diff = goal - obs["ee_pos"][:3]
+    #     raw_action = np.array([*pos_diff, 0.0])
+    #     # print(raw_action, end="\r")
+    #     #print(pos_diff)
+    #     print(pos)
+    #     # action is [dx, dy, dz, gripper]
+    #     # and is normalized to [-1, 1]
+    #     scaled_action = env.get_scaled_action(raw_action)
+    #     obs, reward, term, trunc, info = env.step(scaled_action)
     #     env.render()
+    #     # print(f"goal:{info['goal_pos']}, pos: {obs['ee_pos'][:3]}, abs diff per dim: {np.abs(info['goal_pos'] - obs['ee_pos'][:3])}")
+    # # env.reset()
+    # # for _ in range(1000):
+    # #     action = env.action_space.sample()
+    # #     obs, reward, done, info = env.step(action)
+    # #     env.render()
+    # env.close()
+    np.set_printoptions(precision=3, suppress=True)
+    env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
+    key_action_map = {
+        'w': np.array([-1.0, 0.0, 0.0, 0.0]),
+        's': np.array([1.0, 0.0, 0.0, 0.0]),
+        'a': np.array([0.0, -1.0, 0.0, 0.0]),
+        'd': np.array([0.0, 1.0, 0.0, 0.0]),
+        'q': np.array([0.0, 0.0, 1.0, 0.0]),
+        'e': np.array([0.0, 0.0, -1.0, 0.0]),
+        'z': np.array([0.0, 0.0, 0.0, 1.0]), # close gripper
+        'x': np.array([0.0, 0.0, 0.0, -1.0]),# open gripper
+    }
+    pos_sensitivity = 0.2
+    gripper_sensitivity = 1.0
+    obs, info = env.reset()
+    # print(f"qpos: {info['qpos']}")
+    print(f"eef pos: {obs['ee_pos']}")
+    env.render()
+    while True:
+        raw_key = input("Enter action: ")
+        if raw_key in key_action_map:
+            action = key_action_map[raw_key].copy()
+            action[:3] *= pos_sensitivity
+            action[-1] *= gripper_sensitivity
+            obs, reward, terminated, truncated, info = env.step(action)
+            print(f"goal pos: {info['goal_pos']}")
+            print(f"eef pos: {obs['ee_pos']}")
+            # print(f"Reward: {reward}")
+            env.render()
+            if terminated:
+                print("Terminated")
+                break
+        else:
+            break
     env.close()

@@ -88,7 +88,7 @@ class LiftCubeStateEnv(Env):
         DEVICE_NAME = os.environ['KOCH_DEVICE_NAME']
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
-        self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.012])
+        self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
         assert np.all(self.initial_qpos >= self.qpos_min) and np.all(self.initial_qpos <= self.qpos_max)
 
         self.motor_3_bias = MOTOR_3_BIAS
@@ -119,7 +119,6 @@ class LiftCubeStateEnv(Env):
         # self.dt: float = 0.002
         # self.model.opt.timestep = self.dt
         self.nb_dof = 6
-        self.control_decimation = 40 * 12 # number of simulation steps per control step
     
     def _initialize_action_space(self, action_mode):
         # Set the action space
@@ -355,40 +354,34 @@ class LiftCubeStateEnv(Env):
         # We need the following line to seed self.np_random
         super().reset(seed=seed, options=options)
         
-        if options is None:
-            # Reset the robot to the initial position and sample the cube position
-            cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
-            cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
-            # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-            #### CHANGING THIS POSITION IN WHAT WAS USED IN REAL ROBOT TESTING
-            # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
-            qpos = self.initial_qpos
-            real_qpos = self.radian_to_position(qpos)
+        # Reset the robot to the initial position and sample the cube position
+        cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
+        cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
+        # robot_qpos = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        #### CHANGING THIS POSITION IN WHAT WAS USED IN REAL ROBOT TESTING
+        # robot_qpos = np.array([0, 0, 0, -1.44, -1.57, -1.5])
+        qpos = self.initial_qpos
+        real_qpos = self.radian_to_position(qpos)
 
-            # add naive grav comp term
-            real_qpos[2] += self.motor_3_bias
-            real_qpos = np.clip(real_qpos, self.real_qpos_min, self.real_qpos_max)
-            self.realrobot.set_goal_pos(real_qpos)
-            time.sleep(ACTION_SLEEP_SEC)
-            try:
-                real_qpos = self.realrobot.read_position()
-                qpos = np.asarray(self.position_to_radian(real_qpos), dtype=np.float32)
-            except Exception as e:
-                print(f"Reset: Failed to read position: {e}")
-                raise e
-            self.last_qpos = np.asarray(qpos.copy(), dtype=np.float32)
-            # Set a better resting position initially
-            # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
-            #     1.64550541e+00, -1.30162992e+00])
-            self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = qpos
-            self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
-            self.data.qvel[:] = 0
-        else:
-            self.data.qpos = options["qpos"].copy()
-            self.data.qvel = options["qvel"].copy()
-        
-        if self.include_initial_obj_pose:
-            self.initial_obj_pose = self.data.qpos[self.cube_dof_id:self.cube_dof_id+7].copy()
+        # add naive grav comp term
+        real_qpos[2] += self.motor_3_bias
+        real_qpos = np.clip(real_qpos, self.real_qpos_min, self.real_qpos_max)
+        self.realrobot.set_goal_pos(real_qpos)
+        time.sleep(ACTION_SLEEP_SEC)
+        try:
+            real_qpos = self.realrobot.read_position()
+            qpos = np.asarray(self.position_to_radian(real_qpos), dtype=np.float32)
+        except Exception as e:
+            print(f"Reset: Failed to read position: {e}")
+            raise e
+        self.last_qpos = np.asarray(qpos.copy(), dtype=np.float32)
+        # Set a better resting position initially
+        # robot_qpos = np.array([0.0,  7.30210626e-01,  1.37570755e+00,  1.60038381e-01,\
+        #     1.64550541e+00, -1.30162992e+00])
+        self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof] = qpos
+        self.data.qpos[self.cube_dof_id:self.cube_dof_id+7] = np.concatenate([cube_pos, cube_rot])
+        self.data.qvel[:] = 0
+
 
         # nullspace action space setup
         model = self.model
