@@ -45,7 +45,7 @@
       <site name="bound3" type="box" pos="-0.11 -0.03 0.01" size="0.03 0.005 0.005" rgba="0 1 0 0.1"/>
       <site name="bound4" type="box" pos="-0.11 0.03 0.01" size="0.03 0.005 0.005" rgba="0 1 0 0.1"/>
 
-		<camera name="camera_front" pos="0.049 0.5 0.225" xyaxes="-0.998 0.056 -0.000 -0.019 -0.335 0.942"/>
+		<camera name="camera_front" pos="-0.1 0.25 0.15" xyaxes="-0.998 0.056 -0.000 -0.019 -0.335 0.942"/>
 		<camera name="camera_top" pos="0 0.1 0.6" euler="0 0 0" mode="fixed"/>
 	  <camera name="camera_vizu" pos="-0.1 0.6 0.3" quat="-0.15 -0.1 0.6 1"/>
 	  
