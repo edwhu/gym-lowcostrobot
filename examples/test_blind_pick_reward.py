@@ -61,7 +61,7 @@ def collect_episode(demo, env, ep):
     # pos_diff = np.array([0.02, 0, 0.025])
     pos_diff = np.array([0.01, 0.00, 0.025])
     desired_pos = pos_diff + desired_pos
-    action = np.array([*desired_pos, 1])
+    action = np.array([*desired_pos, 0.8])
 
     print("Descending down to the box")
     # go right over the box.
@@ -94,7 +94,7 @@ def collect_episode(demo, env, ep):
     desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
     pos_diff = np.array([0.01, 0.00, -0.01])
     desired_pos = pos_diff + desired_pos
-    action = np.array([*desired_pos, 1])
+    action = np.array([*desired_pos, 0.8])
     ee_pos = env.unwrapped.get_ee_pos()
     while np.linalg.norm(ee_pos[:3] - desired_pos) > 0.02:
         noise = np.random.normal(0, pos_action_noise, size=3)

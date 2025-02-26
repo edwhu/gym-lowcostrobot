@@ -6,6 +6,7 @@ import mujoco.viewer
 import numpy as np
 from gymnasium import Env, spaces
 from collections import deque
+import time
 
 from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
 
@@ -87,8 +88,8 @@ class LiftCubeStateEnv(Env):
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
         # used for bounding the nullspace controller
-        self.action_min = np.array([-0.1, -0.1, -0.1, -0.6])
-        self.action_max = np.array([0.1, 0.1, 0.1, 0.6])
+        self.action_min = np.array([-0.1, -0.1, -0.1, -1])
+        self.action_max = np.array([0.1, 0.1, 0.1, 1])
 
     def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         # Set the observations space
@@ -145,10 +146,10 @@ class LiftCubeStateEnv(Env):
         # domain randomization variables
         self._dr_noise = {
             # add onto data.ctrl, range is in radians
-            "joint_ctrl_min": np.array([-0.001] * 6),
-            "joint_ctrl_max": np.array([0.001] * 6),
-            "action_min": np.array([-0.005, -0.005, -0.005, -0.000001]),
-            "action_max": np.array([0.005, 0.005, 0.005, 0.000001]),
+            "joint_ctrl_min": np.array([-0.00005] * 6),
+            "joint_ctrl_max": np.array([0.00005] * 6),
+            "action_min": np.array([-0.003, -0.003, -0.003, -0.000001]),
+            "action_max": np.array([0.003, 0.003, 0.003, 0.000001]),
 
         }
         if not use_action_noise:
@@ -159,7 +160,7 @@ class LiftCubeStateEnv(Env):
         self.qpos_max = np.array([1.770515262515263, 3.14, 3.14, 3.14, 3.14, 1.2721025641025645])
 
         # workspace bounds for the ee 
-        self.ee_min = np.array([-0.15, -0.04, 0.012])
+        self.ee_min = np.array([-0.15, -0.04, 0.01])
         self.ee_max = np.array([-0.07, 0.04, 0.1])
 
 
