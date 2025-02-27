@@ -8,6 +8,9 @@ import mujoco
 import mujoco.viewer
 import numpy as np
 import matplotlib.pyplot as plt
+import websockets
+import asyncio
+import json
 
 from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
 from gym_lowcostrobot.envs.dynamixel import Dynamixel
@@ -501,8 +504,66 @@ class LiftCubeStateEnv(Env):
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
         return cube_pos.copy()
 
+# Global variable to store the latest gamepad action
+latest_gamepad_action = np.array([0.0, 0.0, 0.0, 0.0])
+reset = False
+
+async def receive_gamepad_input():
+    """
+    WebSocket client to receive gamepad inputs from the browser.
+    """
+    global latest_gamepad_action
+    global reset
+    try:
+        async with websockets.connect("ws://localhost:8765") as websocket:
+            print("Connected to WebSocket server.")
+            while True:
+                message = await websocket.recv()
+                # print("Received message from server:", message)  # Log the received message
+                inputs = json.loads(message)
+                axes = inputs.get("axes", [0.0] * 4)
+                buttons = inputs.get("buttons", [0.0] * 16)
+
+                # Map axes to X, Y, Z displacements
+                x_displacement = axes[0] * 0.2  # Left joystick X axis
+                y_displacement = -axes[1] * 0.2  # Left joystick Y axis (inverted)
+                z_displacement = -axes[3] * 0.2  # Right joystick Y axis (inverted)
+
+                # Map buttons to gripper control (e.g., right trigger - left trigger)
+                gripper_action = (buttons[7] - buttons[6]) * 1.0
+
+                # Update the latest gamepad action
+                latest_gamepad_action = np.array([-y_displacement, x_displacement, z_displacement, gripper_action])
+
+                reset = buttons[9] == 1
+
+                # print("Updated gamepad action:", latest_gamepad_action)  # Log the updated action
+    except Exception as e:
+        print(f"WebSocket connection error: {e}")
+
+def get_gamepad_action():
+    """
+    Get the latest gamepad action.
+    """
+    return latest_gamepad_action, reset
+
+def start_gamepad_listener():
+    """
+    Start the WebSocket client to listen for gamepad inputs.
+    """
+    print("Starting gamepad listener thread...")
+    # Create a new event loop for this thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(receive_gamepad_input())
 
 if __name__ == "__main__":
+    import threading
+
+    # Start the gamepad listener in a separate thread
+    gamepad_thread = threading.Thread(target=start_gamepad_listener, daemon=True)
+    gamepad_thread.start()
+
     np.set_printoptions(precision=4, suppress=True)
     env = LiftCubeStateEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
         
@@ -516,26 +577,52 @@ if __name__ == "__main__":
         'z': np.array([0.0, 0.0, 0.0, 1.0]), # close gripper
         'x': np.array([0.0, 0.0, 0.0, -1.0]),# open gripper
     }
-    pos_sensitivity = 0.2
+    pos_sensitivity = 0.1
     gripper_sensitivity = 1.0
-    obs, info = env.reset()
-    # print(f"qpos: {info['qpos']}")
-    print(f"eef pos: {obs['ee_pos']}")
-    env.render()
+    # obs, info = env.reset()
+    # # print(f"qpos: {info['qpos']}")
+    # print(f"eef pos: {obs['ee_pos']}")
+    # env.render()
+    # while True:
+    #     raw_key = input("Enter action: ")
+    #     if raw_key in key_action_map:
+    #         action = key_action_map[raw_key].copy()
+    #         action[:3] *= pos_sensitivity
+    #         action[-1] *= gripper_sensitivity
+    #         obs, reward, terminated, truncated, info = env.step(action)
+    #         print(f"goal pos: {info['goal_pos']}")
+    #         print(f"eef pos: {obs['ee_pos']}")
+    #         # print(f"Reward: {reward}")
+    #         env.render()
+    #         if terminated:
+    #             print("Terminated")
+    #             break
+    #     else:
+    #         break
+    # env.close()
     while True:
-        raw_key = input("Enter action: ")
-        if raw_key in key_action_map:
-            action = key_action_map[raw_key].copy()
-            action[:3] *= pos_sensitivity
-            action[-1] *= gripper_sensitivity
+        obs, info = env.reset()
+        # print(f"qpos: {info['qpos']}")
+        # print(f"eef pos: {obs['ee_pos']}")
+        env.render()
+        while True:
+            # raw_key = input("Enter action: ")
+            # if raw_key in key_action_map:
+            # action = key_action_map[raw_key].copy()
+            # action[:3] *= pos_sensitivity
+            # action[-1] *= gripper_sensitivity
+            action, reset = get_gamepad_action()
+            # if any action is close to zero, set it to zero
+            action = np.where(np.abs(action) < 0.01, 0.0, action)
+            print("Gamepad action:", action)
+            # print(action)
             obs, reward, terminated, truncated, info = env.step(action)
-            print(f"goal pos: {info['goal_pos']}")
-            print(f"eef pos: {obs['ee_pos']}")
+            # print(f"goal pos: {info['goal_pos']}")
+            # print(f"eef pos: {obs['ee_pos']}")
             # print(f"Reward: {reward}")
             env.render()
-            if terminated:
-                print("Terminated")
+            if terminated or reset:
+                print("Terminated or reset")
                 break
-        else:
-            break
+            # else: break
     env.close()

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gamepad WebSocket Client</title>
+</head>
+<body>
+    <h1>Gamepad WebSocket Client</h1>
+    <p>Press any button or move any axis on your gamepad.</p>
+    <script>
+        // Connect to the WebSocket server
+        const socket = new WebSocket("ws://localhost:8765");
+
+        socket.onopen = () => {
+            console.log("Connected to WebSocket server.");
+        };
+
+        socket.onclose = () => {
+            console.log("Disconnected from WebSocket server.");
+        };
+
+        // Function to read gamepad inputs
+        function readGamepad() {
+            const gamepads = navigator.getGamepads();
+            if (!gamepads[0]) {
+                console.log("No gamepad detected.");
+                return;
+            }
+
+            const gamepad = gamepads[0];
+            const inputs = {
+                axes: Array.from(gamepad.axes),  // Joystick axes
+                buttons: Array.from(gamepad.buttons, button => button.value)  // Button values
+            };
+
+            // Send inputs to the WebSocket server
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(inputs));
+            }
+        }
+
+        // Poll gamepad inputs at 60 FPS
+        setInterval(readGamepad, 1000 / 60);
+    </script>
+</body>
+</html>
