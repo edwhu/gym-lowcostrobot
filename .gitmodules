@@ -1,0 +1,6 @@
+[submodule "omni_depth"]
+	path = omni_depth
+	url = https://github.com/penn-pal-lab/omni_depth.git
+[submodule "ml-depth-pro"]
+	path = ml-depth-pro
+	url = https://github.com/apple/ml-depth-pro.git

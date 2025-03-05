@@ -1,6 +1,9 @@
 import os
 import time
 from collections import deque
+import warnings
+# Filter out Gymnasium environment registration warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='gymnasium.envs.registration')
 
 import gymnasium as gym
 from gymnasium import Env, spaces
@@ -82,13 +85,21 @@ class LiftCubeStateEnv(Env):
         self.qpos_min = self.position_to_radian(self.real_qpos_min)
         self.qpos_max = self.position_to_radian(self.real_qpos_max)
         
-        if 'KOCH_DEVICE_NAME' not in os.environ:
-            raise ValueError("Please set the KOCH_DEVICE_NAME environment variable to the serial port of the Dynamixel device")
+        # if 'KOCH_DEVICE_NAME' not in os.environ:
+        #     raise ValueError("Please set the KOCH_DEVICE_NAME environment variable to the serial port of the Dynamixel device")
         
-        DEVICE_NAME = os.environ['KOCH_DEVICE_NAME']
+        DEVICE_NAME = 'COM6' # os.environ['KOCH_DEVICE_NAME']
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
+        
+        # Set via manual calculation
         self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
+        
+        # dynamixel_values = [2100, 1700, 1800, 2000, 3200, 3000]
+
+        # self.initial_qpos = self.position_to_radian(dynamixel_values)
+
+        
         assert np.all(self.initial_qpos >= self.qpos_min) and np.all(self.initial_qpos <= self.qpos_max)
 
         # Initialize robot position
@@ -120,8 +131,8 @@ class LiftCubeStateEnv(Env):
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
         
         # Used for bounding the nullspace controller
-        self.action_min = np.array([-0.1, -0.1, -0.1, -0.3])
-        self.action_max = np.array([0.1, 0.1, 0.1, 0.3])
+        self.action_min = np.array([-0.3, -0.3, -0.3, -0.3])
+        self.action_max = np.array([0.3, 0.3, 0.3, 0.3])
 
     def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         """Initialize the observation space based on the specified mode"""
@@ -184,9 +195,9 @@ class LiftCubeStateEnv(Env):
         if not use_action_noise:
             self._dr_noise = {k: np.zeros_like(v) for k, v in self._dr_noise.items()}
 
-        # Workspace bounds for the ee 
-        self.ee_min = np.array([-0.15, -0.04, 0.012])
-        self.ee_max = np.array([-0.07, 0.04, 0.1])
+        # Koch 1.1的工作空间限制
+        self.ee_min = np.array([-0.5, -0.5, 0.01])  # 更大的工作空间
+        self.ee_max = np.array([0.5, 0.5, 0.5])
 
     def radian_to_position(self, values):
         """Convert radian values to Dynamixel position values"""
@@ -486,10 +497,16 @@ class LiftCubeStateEnv(Env):
         gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.1
 
         # Determine success and reward
-        success = gripper_blocked and observation['ee_pos'][2] >= THRESHOLD_HEIGHT
-        reward = float(success) 
-        terminated = success
-        truncated = False
+        if 0:
+            success = gripper_blocked and observation['ee_pos'][2] >= THRESHOLD_HEIGHT
+            reward = float(success) 
+            terminated = success
+            truncated = False
+        else:
+            success = False
+            reward = 0.0
+            terminated = False
+            truncated = False
         
         # Prepare info dictionary
         info = {

@@ -66,10 +66,10 @@ def on_release(key):
             current_action[0] = 0.0
         elif k == 'a' or k == 'd':
             current_action[1] = 0.0
-        elif k == 'i' or k == 'k':
+        elif k == 'i' or k == 'u':
             current_action[2] = 0.0
         # Reset gripper controls
-        elif k == 'j' or k == 'l':
+        elif k == 'j' or k == 'k':
             current_action[3] = 0.0
 
 def main():
@@ -79,8 +79,8 @@ def main():
     Controls:
     - W/S: Move forward/backward (X-axis)
     - A/D: Move left/right (Y-axis)
-    - I/K: Move up/down (Z-axis)
-    - J/L: Close/open gripper
+    - U/I: Move up/down (Z-axis)
+    - J/K: Close/open gripper
     - Right Ctrl + R: Reset environment
     - ESC or Ctrl C: Exit
     """
