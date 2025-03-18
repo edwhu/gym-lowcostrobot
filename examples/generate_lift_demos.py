@@ -3,61 +3,58 @@ import numpy as np
 import gymnasium as gym
 from copy import deepcopy
 import imageio 
-from collections import deque
+import os
+# from collections import deque
+from tensordict import TensorDict
+# import torchvision.transforms.functional as F
+import torch
 
 np.set_printoptions(precision=3, suppress=True)
+demo_folder = "/Users/edward/projects/gym-lowcostrobot/demos/grayscale_lift"
+os.makedirs(demo_folder, exist_ok=True)
+# format of episodic buffer should be:
+# a list of dictionaries, each dictionary contains the following keys:
+# observations, next_observations, actions, rewards, dones.
 
-env = gym.make('LiftCubeCameraPrivileged-v0', render_mode="human", observation_mode="both", action_mode="nullspace")
-# env = gym.make('LiftCubeStateNoisy-v0', render_mode="human")
-env.reset()
-
-demo_dict = {
+demos = []
+new_episode = {
     'observations': {
         'rgb': [],
         'state': []
     },
-    'next_observations': {
-        'rgb': [],
-        'state': []
-    },
     'actions': [],
-    'abs_pos_actions': [],
-    'joint_actions': [],
     'rewards': [],
     'dones': [],
+    'terminated': [],
 }
+env = gym.make('LiftCubeCameraPrivileged-v0', render_mode="rgb_array", observation_mode="both", action_mode="nullspace")
+# env = gym.make('LiftCubeStateNoisy-v0', render_mode="human")
+env.reset()
 
-pos_action_noise = 0.0001
+
+
+pos_action_noise = 0.005
 
 def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info):
-    # demo['observations']['rgb'].append(obs['image_wrist'])
-    # state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], obs['cube_pos']], -1)
-    # demo['observations']['state'].append(state)
+    demo['observations']['rgb'].append(obs['image'])
+    state = np.concatenate([obs['qpos'], obs['qvel']], -1)
+    demo['observations']['state'].append(state)
 
     demo['actions'].append(rel_action)
-    demo['abs_pos_actions'].append(abs_action)
-    demo['joint_actions'].append(info['target_qpos'])
-
     demo['rewards'].append(reward)
     demo['dones'].append(term or trunc)
-    # print(obs['initial_obj_pose'],obs['log_is_success'])
+    demo['terminated'].append(term)
 
     return demo
 
 def collect_episode(demo, env, ep):
-
-    # while True:
     obs, info = env.reset()
-    # print(obs['initial_obj_pose'],obs['log_is_success'])
-    # env.render()
-
-    # demo['observations']['rgb'].append(obs['image_wrist'])
-    # state = np.concatenate([obs['arm_qpos'], obs['ee_pos'], obs['cube_pos']], -1)
+    demo['observations']['rgb'].append(obs['image'])
     state = np.concatenate([obs['qpos'], obs['qvel']], -1)
     demo['observations']['state'].append(state)
 
     i = 0
-    desired_pos = info['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
+    desired_pos = obs['qpos'][env.unwrapped.cube_dof_id: env.unwrapped.cube_dof_id + 3]
     # pos_diff = np.array([0.02, 0, 0.025])
     pos_diff = np.array([0.01, 0.00, 0.025])
     desired_pos = pos_diff + desired_pos
@@ -177,11 +174,44 @@ def collect_episode(demo, env, ep):
 episodic_return = []
 episodic_success = []
 
-demos = deepcopy(demo_dict)
-for ep in range(1000):
-    demo = deepcopy(demo_dict)
+demos = []
+for ep in range(100):
     print(ep)
+    demo = deepcopy(new_episode)
     demo = collect_episode(demo, env, ep)
+    episode = TensorDict(demo)
+    demos.append(episode)
     success = np.sum(demo['rewards']) > 300
     episodic_success.append(success)
+    episodic_return.append(np.sum(demo['rewards']))
     print(f"Running success rate: {np.mean(episodic_success):.2f}, {ep} episodes", end='\n')
+
+print('\nfinal demo dataset')
+for k, v in demos[0].items():
+    if isinstance(v, dict):
+        for k2, v2 in v.items():
+            print(k, k2, v2.shape)
+    else:
+        print(k, v.shape)
+
+# save the statistics into a metadata dict
+metadata = {
+    'success': np.mean(episodic_success),
+    'return_avg': np.mean(episodic_return),
+    'return_min': np.min(episodic_return),
+    'return_max': np.max(episodic_return),
+    'action_min': np.ones_like(demos[0]['actions'][0]) * -1,
+    'action_max': np.ones_like(demos[0]['actions'][0]),
+}
+
+data = {}
+data['metadata'] = metadata
+data['episodes'] = demos
+
+print('\nstatistics:')
+for k, v in metadata.items():
+    print(k, v)
+
+imageio.mimwrite(os.path.join(demo_folder, 'demos.mp4'), demos[0]['observations']['rgb'][:1000], fps=5)
+
+torch.save(data, os.path.join(demo_folder, 'buffer.pkl'))   

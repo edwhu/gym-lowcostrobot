@@ -23,10 +23,9 @@ def register_robotics_envs():
     register(
         id="LiftCubeCameraPrivileged-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeCameraEnv",
-        max_episode_steps=70,
-        kwargs={"observation_mode":"both"}
+        max_episode_steps=50,
+        kwargs={"observation_mode":"both", "action_mode":"nullspace", "use_action_noise": False, "render_mode":"rgb_array"}
     )
-
 
     # for each environment, we have 3 types
     # the normal environment for training
