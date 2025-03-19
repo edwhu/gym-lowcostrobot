@@ -10,7 +10,7 @@ from tensordict import TensorDict
 import torch
 
 np.set_printoptions(precision=3, suppress=True)
-demo_folder = "/Users/edward/projects/gym-lowcostrobot/demos/grayscale_lift"
+demo_folder = "demos/grayscale_lift"
 os.makedirs(demo_folder, exist_ok=True)
 # format of episodic buffer should be:
 # a list of dictionaries, each dictionary contains the following keys:
@@ -175,7 +175,7 @@ episodic_return = []
 episodic_success = []
 
 demos = []
-for ep in range(100):
+for ep in range(10):
     print(ep)
     demo = deepcopy(new_episode)
     demo = collect_episode(demo, env, ep)
@@ -186,13 +186,51 @@ for ep in range(100):
     episodic_return.append(np.sum(demo['rewards']))
     print(f"Running success rate: {np.mean(episodic_success):.2f}, {ep} episodes", end='\n')
 
-print('\nfinal demo dataset')
-for k, v in demos[0].items():
-    if isinstance(v, dict):
-        for k2, v2 in v.items():
-            print(k, k2, v2.shape)
-    else:
-        print(k, v.shape)
+FLATTENED_DEMOS = True
+if FLATTENED_DEMOS: # concatenate the demos into a single TensorDict
+    flat_demos = {
+        'observations': {
+            'rgb': [],
+            'state': []
+        },
+        'next_observations': {
+            'rgb': [],
+            'state': []
+        },
+        'actions': [],
+        'rewards': [],
+        'dones': [],
+    }
+    for demo in demos:
+        flat_demos['observations']['rgb'].append(demo['observations']['rgb'][:-1])
+        flat_demos['observations']['state'].append(demo['observations']['state'][:-1])
+        flat_demos['next_observations']['rgb'].append(demo['observations']['rgb'][1:])
+        flat_demos['next_observations']['state'].append(demo['observations']['state'][1:])
+        flat_demos['actions'].append(demo['actions'])
+        flat_demos['rewards'].append(demo['rewards'])
+        flat_demos['dones'].append(demo['dones'])
+    
+    for k, v in flat_demos.items():
+        if isinstance(v, dict):
+            for k2, v2 in v.items():
+                flat_demos[k][k2] = np.concatenate(v2, axis=0)
+        else:
+            flat_demos[k] = np.concatenate(v, axis=0)
+    print('\nfinal demo dataset')
+    for k, v in flat_demos.items():
+        if isinstance(v, dict):
+            for k2, v2 in v.items():
+                print(k, k2, v2.shape)
+        else:
+            print(k, v.shape)
+else:
+    print('\nfinal demo dataset')
+    for k, v in demos[0].items():
+        if isinstance(v, dict):
+            for k2, v2 in v.items():
+                print(k, k2, v2.shape)
+        else:
+            print(k, v.shape)
 
 # save the statistics into a metadata dict
 metadata = {
