@@ -31,9 +31,7 @@ env = gym.make('LiftCubeCameraPrivileged-v0', render_mode="rgb_array", observati
 # env = gym.make('LiftCubeStateNoisy-v0', render_mode="human")
 env.reset()
 
-
-
-pos_action_noise = 0.005
+pos_action_noise = 0.000005
 
 def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info):
     demo['observations']['rgb'].append(obs['image'])
@@ -181,7 +179,7 @@ for ep in range(100):
     demo = collect_episode(demo, env, ep)
     episode = TensorDict(demo)
     demos.append(episode)
-    success = np.sum(demo['rewards']) > 300
+    success = np.sum(demo['rewards']) > 0
     episodic_success.append(success)
     episodic_return.append(np.sum(demo['rewards']))
     print(f"Running success rate: {np.mean(episodic_success):.2f}, {ep} episodes", end='\n')
