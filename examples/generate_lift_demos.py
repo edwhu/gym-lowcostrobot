@@ -10,11 +10,16 @@ from tensordict import TensorDict
 import torch
 
 np.set_printoptions(precision=3, suppress=True)
-demo_folder = "demos/grayscale_lift"
-os.makedirs(demo_folder, exist_ok=True)
+
 # format of episodic buffer should be:
 # a list of dictionaries, each dictionary contains the following keys:
 # observations, next_observations, actions, rewards, dones.
+FLATTENED_DEMOS = True
+NUM_DEMOS = 100
+FILTER_SUCCESS = False
+
+demo_folder = f"/home/edward/projects/fowm/data/koch_lift_{NUM_DEMOS}_success_{FILTER_SUCCESS}"
+os.makedirs(demo_folder, exist_ok=True)
 
 demos = []
 new_episode = {
@@ -31,11 +36,12 @@ env = gym.make('LiftCubeCameraPrivileged-v0', render_mode="rgb_array", observati
 # env = gym.make('LiftCubeStateNoisy-v0', render_mode="human")
 env.reset()
 
-pos_action_noise = 0.000005
+pos_action_noise = 0.005
 
 def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, info):
     demo['observations']['rgb'].append(obs['image'])
-    state = np.concatenate([obs['qpos'], obs['qvel']], -1)
+    # state = np.concatenate([obs['qpos'], obs['qvel']], -1)
+    state = np.concatenate([obs['qpos'][:9], obs['touch']], -1)
     demo['observations']['state'].append(state)
 
     demo['actions'].append(rel_action)
@@ -48,7 +54,7 @@ def store_transition(demo, obs, abs_action, rel_action, reward, term, trunc, inf
 def collect_episode(demo, env, ep):
     obs, info = env.reset()
     demo['observations']['rgb'].append(obs['image'])
-    state = np.concatenate([obs['qpos'], obs['qvel']], -1)
+    state = np.concatenate([obs['qpos'][:9], obs['touch']], -1)
     demo['observations']['state'].append(state)
 
     i = 0
@@ -173,18 +179,19 @@ episodic_return = []
 episodic_success = []
 
 demos = []
-for ep in range(10):
+for ep in range(NUM_DEMOS):
     print(ep)
     demo = deepcopy(new_episode)
     demo = collect_episode(demo, env, ep)
     episode = TensorDict(demo)
-    demos.append(episode)
     success = np.sum(demo['rewards']) > 0
+    if FILTER_SUCCESS and not success:
+        continue    
+    demos.append(episode)
     episodic_success.append(success)
     episodic_return.append(np.sum(demo['rewards']))
     print(f"Running success rate: {np.mean(episodic_success):.2f}, {ep} episodes", end='\n')
 
-FLATTENED_DEMOS = True
 if FLATTENED_DEMOS: # concatenate the demos into a single TensorDict
     flat_demos = {
         'observations': {
@@ -198,6 +205,7 @@ if FLATTENED_DEMOS: # concatenate the demos into a single TensorDict
         'actions': [],
         'rewards': [],
         'dones': [],
+        'terminated': [],
     }
     for demo in demos:
         flat_demos['observations']['rgb'].append(demo['observations']['rgb'][:-1])
@@ -207,6 +215,7 @@ if FLATTENED_DEMOS: # concatenate the demos into a single TensorDict
         flat_demos['actions'].append(demo['actions'])
         flat_demos['rewards'].append(demo['rewards'])
         flat_demos['dones'].append(demo['dones'])
+        flat_demos['terminated'].append(demo['terminated'])
     
     for k, v in flat_demos.items():
         if isinstance(v, dict):
@@ -221,6 +230,27 @@ if FLATTENED_DEMOS: # concatenate the demos into a single TensorDict
                 print(k, k2, v2.shape)
         else:
             print(k, v.shape)
+    demos = flat_demos
+    # save the statistics into a metadata dict
+    metadata = {
+        'success': np.mean(episodic_success),
+        'return_avg': np.mean(episodic_return),
+        'return_min': np.min(episodic_return),
+        'return_max': np.max(episodic_return),
+        'action_min': np.ones_like(demos['actions'][0]) * -1,
+        'action_max': np.ones_like(demos['actions'][0]),
+    }
+
+    print('\nstatistics:')
+    for k, v in metadata.items():
+        print(k, v)
+    demos['metadata'] = metadata
+    imageio.mimwrite(os.path.join(demo_folder, 'demos.mp4'), demos['observations']['rgb'][:1000], fps=5)
+    # store as a pickle file.
+    # import ipdb; ipdb.set_trace()
+    import pickle 
+    with open(f'{demo_folder}/buffer.pkl', 'wb') as f:
+        pickle.dump(demos, f)
 else:
     print('\nfinal demo dataset')
     for k, v in demos[0].items():
@@ -230,24 +260,24 @@ else:
         else:
             print(k, v.shape)
 
-# save the statistics into a metadata dict
-metadata = {
-    'success': np.mean(episodic_success),
-    'return_avg': np.mean(episodic_return),
-    'return_min': np.min(episodic_return),
-    'return_max': np.max(episodic_return),
-    'action_min': np.ones_like(demos[0]['actions'][0]) * -1,
-    'action_max': np.ones_like(demos[0]['actions'][0]),
-}
+    # save the statistics into a metadata dict
+    metadata = {
+        'success': np.mean(episodic_success),
+        'return_avg': np.mean(episodic_return),
+        'return_min': np.min(episodic_return),
+        'return_max': np.max(episodic_return),
+        'action_min': np.ones_like(demos[0]['actions'][0]) * -1,
+        'action_max': np.ones_like(demos[0]['actions'][0]),
+    }
 
-data = {}
-data['metadata'] = metadata
-data['episodes'] = demos
+    data = {}
+    data['metadata'] = metadata
+    data['episodes'] = demos
 
-print('\nstatistics:')
-for k, v in metadata.items():
-    print(k, v)
+    print('\nstatistics:')
+    for k, v in metadata.items():
+        print(k, v)
 
-imageio.mimwrite(os.path.join(demo_folder, 'demos.mp4'), demos[0]['observations']['rgb'][:1000], fps=5)
+    imageio.mimwrite(os.path.join(demo_folder, 'demos.mp4'), demos[0]['observations']['rgb'][:1000], fps=5)
 
-torch.save(data, os.path.join(demo_folder, 'buffer.pkl'))   
+    torch.save(data, os.path.join(demo_folder, 'buffer.pkl'))   

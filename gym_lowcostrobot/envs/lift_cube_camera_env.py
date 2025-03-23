@@ -88,6 +88,19 @@ class LiftCubeCameraEnv(Env):
         # Load the MuJoCo model and data
         self.model = mujoco.MjModel.from_xml_path(os.path.join(ASSETS_PATH, "lift_cube_camera.xml"), {})
         self.data = mujoco.MjData(self.model)
+
+        # make table rainbow shaped.
+        l = len(self.model.tex_type)
+        # for i in range(l):
+        #     if self.model.tex_type[i] == 0:
+        #         height = self.model.tex_height[i]
+        #         width = self.model.tex_width[i]
+        #         s = self.model.tex_adr[i]
+        #         for x in range(height):
+        #             for y in range(width):
+        #                 cur_s = s + (x * width + y) * 3
+        #                 self.model.tex_data[cur_s:cur_s + 3] = [int(x / height * 255), int(y / width * 255), 128]
+        # self.model.mat_texrepeat[:, :] = 1
         # Enable gravity compensation. Set to 0.0 to disable.
         gravity_compensation = True
         for body in ["base_link", "link_1", "link_2", "link_3", "link_4", "link_5", "link_6"]:
@@ -149,8 +162,8 @@ class LiftCubeCameraEnv(Env):
         # Set variables used for the task
         self.threshold_height = 0.06
         ## modified to make the cube generate in the boundaries.
-        self.cube_low = np.array([-0.14, -0.03, 0.01])  # move the cube closer to the robot
-        self.cube_high = np.array([-0.08, 0.03, 0.01])
+        self.cube_low = np.array([-0.16, -0.05, 0.01])  # move the cube closer to the robot
+        self.cube_high = np.array([-0.06, 0.05, 0.01])
 
         # get dof addresses
         self.cube_dof_id = self.model.body("cube").dofadr[0]
@@ -332,7 +345,7 @@ class LiftCubeCameraEnv(Env):
                 self.rgb_array_renderer.update_scene(self.data, camera=self.camera_name)
                 curr_frame = self.rgb_array_renderer.render()
                 # convert rgb to grayscale
-                curr_frame = np.dot(curr_frame[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+                # curr_frame = np.dot(curr_frame[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
             else:
                 # observation["image_front"] = np.zeros((84, 84, 3), dtype=np.uint8)
                 curr_frame = np.zeros((84, 84), dtype=np.uint8)
@@ -342,8 +355,8 @@ class LiftCubeCameraEnv(Env):
 
             self.frames.append(curr_frame)
             # stack the frames together into 84,84,3
-            observation["image"] = np.stack(self.frames, axis=-1)
-
+            # observation["image"] = np.stack(self.frames, axis=-1)
+            observation["image"] = curr_frame
         return observation
 
     def reset(self, seed=None, options=None):
@@ -433,36 +446,37 @@ class LiftCubeCameraEnv(Env):
         terminated = cube_z >= self.threshold_height and ee_to_cube < 0.05
         observation["log_is_success"] = np.ones((1,), dtype=np.float32) * terminated
         reward = 0
-        if terminated:
-            msg = "success phase"
-            reward = 300
-        else:
-            dist = ee_to_cube
-            reaching_reward = 1 - np.tanh(10.0 * dist)
-            reward += reaching_reward
-            msg = "reaching phase"
+        reward = float(terminated)
+        # if terminated:
+        #     msg = "success phase"
+        #     reward = 300
+        # else:
+        #     dist = ee_to_cube
+        #     reaching_reward = 1 - np.tanh(10.0 * dist)
+        #     reward += reaching_reward
+        #     msg = "reaching phase"
 
-            # grasping reward
-            if observation["touch"].all():
-                reward += 0.25
-                dist = np.abs(cube_z - self.threshold_height)
-                picking_reward = 1 - np.tanh(10.0 * dist)
-                reward += picking_reward
-                msg = "picking phase"
+        #     # grasping reward
+        #     if observation["touch"].all():
+        #         reward += 0.25
+        #         dist = np.abs(cube_z - self.threshold_height)
+        #         picking_reward = 1 - np.tanh(10.0 * dist)
+        #         reward += picking_reward
+        #         msg = "picking phase"
 
-        # print(f"{msg}: {reward}, {observation['touch'].all()}")
-        # penalize closed gripper when not close to the cube.
-        is_close = ee_to_cube < 0.05
-        gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] <= 0.7 # 0 is closed and 2.5 is open
-        gripper_penalty = 0.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
+        # # print(f"{msg}: {reward}, {observation['touch'].all()}")
+        # # penalize closed gripper when not close to the cube.
+        # is_close = ee_to_cube < 0.05
+        # gripper_closing = self.data.qpos[self.arm_dof_id+self.nb_dof-1] <= 0.7 # 0 is closed and 2.5 is open
+        # gripper_penalty = 0.5 * gripper_closing * np.tanh(10 * ee_to_cube) * ~is_close
 
-        # penalize noisy actions using action norm
-        action_penalty = 0.1 * np.linalg.norm(action)
+        # # penalize noisy actions using action norm
+        # action_penalty = 0.1 * np.linalg.norm(action)
 
-        # print(f"task reward: {reward:.3f}, gripper_penalty: {gripper_penalty:.3f}, ee_to_cube: {ee_to_cube:.3f}, action_penalty: {action_penalty:.3f}")
+        # # print(f"task reward: {reward:.3f}, gripper_penalty: {gripper_penalty:.3f}, ee_to_cube: {ee_to_cube:.3f}, action_penalty: {action_penalty:.3f}")
 
-        reward -= gripper_penalty
-        reward -= action_penalty
+        # reward -= gripper_penalty
+        # reward -= action_penalty
 
         info = {}
         # Store the correct (x,y,z,gripper_joint) action that WOULD have been taken
@@ -509,11 +523,13 @@ class LiftCubeCameraEnv(Env):
         return cube_pos.copy()
 
 if __name__ == "__main__":
-    env = LiftCubeCameraEnv(observation_mode="both",render_mode="human", action_mode="nullspace", use_action_noise=False)
+    env = LiftCubeCameraEnv(observation_mode="both",render_mode="rgb_array", action_mode="nullspace", use_action_noise=False)
     obs, _ = env.reset()
-    import ipdb; ipdb.set_trace()
-    for _ in range(1000):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        env.render()
-    env.close()
+    print(obs.keys())
+    import imageio
+    imageio.imwrite("test.png", obs["image"])
+    # for _ in range(1000):
+    #     action = env.action_space.sample()
+    #     obs, reward, terminated, truncated, info = env.step(action)
+    #     env.render()
+    # env.close()
