@@ -330,8 +330,10 @@ class LiftCubeStateEnv(Env):
         
         return info
 
+
+
     def get_scaled_action(self, raw_action):
-        """Convert raw action to scaled action in range [-1, 1]"""
+        """Normalize raw action to scaled action in range [-1, 1]"""
         scaled_min, scaled_max = -1, 1
         raw_action = np.clip(raw_action, self.action_min, self.action_max)
         scaled_action = (raw_action - self.action_min) / (self.action_max - self.action_min) * (scaled_max - scaled_min) + scaled_min

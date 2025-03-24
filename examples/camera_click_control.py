@@ -37,7 +37,7 @@ def main():
     global clicked_point, rgb_frame, depth_frame
     
     # Load calibration matrix
-    calibration_path = os.path.join('omni_depth', 'results', 'calibration_matrix.npy')
+    calibration_path = os.path.join('results', 'calibration_matrix.npy')
     if not os.path.exists(calibration_path):
         print(f"Calibration matrix not found at {calibration_path}")
         return
@@ -130,9 +130,11 @@ def main():
                         
                         action = np.zeros(4)
                         action[:3] = movement_vector
+                        action = env.get_scaled_action(action)
+                        
                         obs, reward, terminated, truncated, info = env.step(action)
                         
-                        print(f"New end-effector position: {obs}")
+                        print(f"New end-effector position: {obs['ee_pos']}")
                         env.render()
                     else:
                         print("Invalid depth at clicked point")
