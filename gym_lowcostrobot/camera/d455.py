@@ -56,7 +56,6 @@ class D455Camera:
         self.device_id = device_id
         self.output_dir = output_dir
         
-        # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
         # Initialize camera state
@@ -70,24 +69,20 @@ class D455Camera:
         self.frame_count = 0
         
         # Calibration data
-        self.T_base_camera = np.eye(4)  # Identity matrix as default
+        self.T_base_camera = np.eye(4)  
         
-        # Initialize streaming
         self.initialize_streaming()
         
     def initialize_streaming(self):
-        """Initialize the RealSense pipeline and configuration."""
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         
-        # Try to get the device
         ctx = rs.context()
         devices = ctx.query_devices()
         
         if len(devices) == 0:
             raise RuntimeError("No RealSense devices connected")
         
-        # Select device
         selected_device = None
         if self.device_id:
             for device in devices:
@@ -101,10 +96,8 @@ class D455Camera:
             self.device_id = selected_device.get_info(rs.camera_info.serial_number)
             print(f"Using RealSense device: {self.device_id}")
         
-        # Enable the device
         self.config.enable_device(self.device_id)
         
-        # Configure streams
         if self.enable_rgb:
             self.config.enable_stream(
                 rs.stream.color,
@@ -123,24 +116,19 @@ class D455Camera:
                 self.fps
             )
             
-        # Create alignment object
         if self.align_frames and self.enable_rgb and self.enable_depth:
             self.align = rs.align(rs.stream.color)
     
     def start(self):
-        """Start the camera streaming."""
         if not self.is_running:
             try:
-                # Start streaming
                 self.profile = self.pipeline.start(self.config)
-                
                 # Wait for auto-exposure to stabilize
                 time.sleep(1.0)
                 
                 self.is_running = True
                 print("Camera streaming started")
                 
-                # Get depth sensor if available
                 if self.enable_depth:
                     depth_sensor = self.profile.get_device().first_depth_sensor()
                     # Set depth units to millimeters (1mm)
@@ -155,7 +143,6 @@ class D455Camera:
             return True
     
     def stop(self):
-        """Stop the camera streaming."""
         if self.is_running:
             if self.is_recording:
                 self.stop_recording()
@@ -180,14 +167,11 @@ class D455Camera:
             return None, None
         
         try:
-            # Wait for frames
             frames = self.pipeline.wait_for_frames()
             
-            # Align frames if enabled
             if self.align_frames and self.enable_rgb and self.enable_depth:
                 frames = self.align.process(frames)
             
-            # Extract color and depth frames
             rgb_frame = None
             depth_frame = None
             
@@ -208,26 +192,17 @@ class D455Camera:
             return None, None
     
     def get_point_cloud(self, rgb_frame: np.ndarray, depth_frame: np.ndarray) -> np.ndarray:
-        """
-        Generate a point cloud from RGB and depth frames.
-        
-        Args:
-            rgb_frame: RGB frame as numpy array
-            depth_frame: Depth frame as numpy array
-            
-        Returns:
-            Nx6 numpy array with [x, y, z, r, g, b] points
+        """         
+        Returns:  Nx6 numpy array with [x, y, z, r, g, b] points
         """
         if not (self.is_running and self.enable_depth):
             print("Camera is not running or depth is not enabled")
             return None
         
         try:
-            # Get depth intrinsics
             depth_profile = self.profile.get_stream(rs.stream.depth)
             intrinsics = depth_profile.as_video_stream_profile().get_intrinsics()
             
-            # Create empty point cloud
             height, width = depth_frame.shape
             points = np.zeros((height * width, 6), dtype=np.float32)
             
@@ -405,7 +380,6 @@ class D455Camera:
         return True
     
     def stop_recording(self):
-        """Stop the current recording."""
         if self.is_recording:
             self.is_recording = False
             if self.recording_thread:
@@ -417,16 +391,6 @@ class D455Camera:
             return False
     
     def get_depth_at_point(self, x: int, y: int) -> float:
-        """
-        Get depth value at a specific pixel coordinate.
-        
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            
-        Returns:
-            Depth value in meters (or None if invalid)
-        """
         if not (self.is_running and self.enable_depth):
             print("Camera is not running or depth is not enabled")
             return None
@@ -444,23 +408,13 @@ class D455Camera:
         
         depth_value = depth_frame[y, x]
         
-        # Convert depth to meters (assuming it's in millimeters)
+        # Convert depth to meters 
         if depth_value == 0:
             return None  # Invalid depth
         
-        return depth_value / 1000.0  # Convert to meters
+        return depth_value    # Convert to meters
     
     def get_3d_point(self, x: int, y: int) -> np.ndarray:
-        """
-        Get 3D point at a specific pixel coordinate.
-        
-        Args:
-            x: X coordinate
-            y: Y coordinate
-            
-        Returns:
-            3D point in camera coordinate system [x, y, z] in meters
-        """
         if not (self.is_running and self.enable_depth):
             print("Camera is not running or depth is not enabled")
             return None
@@ -519,28 +473,18 @@ class D455Camera:
     
     def set_calibration_matrix(self, T_base_camera: np.ndarray):
         """
-        Set the calibration matrix for transforming from camera to robot base.
-        
-        Args:
-            T_base_camera: 4x4 transformation matrix
+        Set extristics for transforming from camera to robot base.
         """
         if T_base_camera.shape != (4, 4):
             raise ValueError("Calibration matrix must be 4x4")
         
         self.T_base_camera = T_base_camera.copy()
-        
-        # Save calibration matrix
-        np.save(os.path.join(self.output_dir, 'calibration_matrix.npy'), self.T_base_camera)
-        print(f"Calibration matrix saved to {self.output_dir}/calibration_matrix.npy")
-    
+        if np.array_equal(T_base_camera, np.eye(4)):
+            print("Error: set to identity")
+        else:
+            print("Regsited extrinsic ")
+
     def load_calibration_matrix(self, file_path: Optional[str] = None):
-        """
-        Load calibration matrix from file.
-        
-        Args:
-            file_path: Path to calibration matrix file (.npy)
-                       If None, tries to load from output_dir
-        """
         if file_path is None:
             file_path = os.path.join(self.output_dir, 'calibration_matrix.npy')
         

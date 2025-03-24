@@ -12,7 +12,7 @@ is_running = True
 env = None
 obs = None
 info = None
-ACTION_MAGNITUDE = 3.0
+ACTION_MAGNITUDE = 1.0
 
 def on_press(key):
     """Handle key press events"""

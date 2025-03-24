@@ -88,7 +88,7 @@ class LiftCubeStateEnv(Env):
         # if 'KOCH_DEVICE_NAME' not in os.environ:
         #     raise ValueError("Please set the KOCH_DEVICE_NAME environment variable to the serial port of the Dynamixel device")
         
-        DEVICE_NAME = 'COM6' # os.environ['KOCH_DEVICE_NAME']
+        DEVICE_NAME = '/dev/ttyACM0' # os.environ['KOCH_DEVICE_NAME']
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
         
@@ -260,19 +260,11 @@ class LiftCubeStateEnv(Env):
         return q
 
     def apply_action(self, action):
-        """
-        Apply the action to the robot
-        
-        Args:
-            action: Action to apply
-            
-        Returns:
-            Dictionary with information about the action
-        """
+        """Notice action should be normalized before sending to env.step()"""
         info = {}
         
         if self.action_mode == "nullspace":
-            assert action.min() >= -5.0 and action.max() <= 5.0
+            assert action.min() >= -1.0 and action.max() <= 1.0
             
             # Convert normalized action to raw action
             raw_action = self.get_raw_action(action)
@@ -329,7 +321,6 @@ class LiftCubeStateEnv(Env):
             if self.render_mode == "human":
                 self.viewer.sync()
         
-        # Store information about the action
         info = {
             'goal_pos': goal_pos if self.action_mode == "nullspace" else None,
             'target_qpos': target_qpos,

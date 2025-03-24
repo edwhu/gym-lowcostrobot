@@ -17,7 +17,6 @@ rgb_frame = None
 depth_frame = None
 
 def mouse_callback(event, x, y, flags, param):
-    """Callback function for mouse events"""
     global clicked_point
     if event == cv2.EVENT_LBUTTONDOWN:
         clicked_point = (x, y)
@@ -56,15 +55,12 @@ def main():
         align_frames=True
     )
     
-    # Set the calibration matrix
     camera.set_calibration_matrix(T_base_camera)
     
-    # Start camera
     if not camera.start():
         print("Failed to start camera")
         return
     
-    # Create environment
     env = LiftCubeStateEnv(
         observation_mode="both",
         render_mode="human", 
@@ -72,12 +68,10 @@ def main():
         use_action_noise=False
     )
     
-    # Initialize environment
     obs, info = env.reset()
     print(f"Initial end-effector position: {obs['ee_pos'][:3]}")
     env.render()
     
-    # Create display window
     cv2.namedWindow("Camera View")
     cv2.setMouseCallback("Camera View", mouse_callback)
     
@@ -95,21 +89,17 @@ def main():
     
     try:
         while True:
-            # Get frames from camera
             rgb_frame, depth_frame = camera.get_frames()
             
             if rgb_frame is None or depth_frame is None:
                 print("Failed to get frames")
-                time.sleep(0.1)
                 continue
             
-            # Convert depth to color map for visualization
             depth_colormap = cv2.applyColorMap(
                 cv2.convertScaleAbs(depth_frame, alpha=0.03),
                 cv2.COLORMAP_JET
             )
             
-            # Combine images side by side
             combined = np.hstack((rgb_frame, depth_colormap))
             
             # Draw current end-effector position if available
@@ -118,17 +108,14 @@ def main():
                            f"EE Position: {obs['ee_pos'][0]:.3f}, {obs['ee_pos'][1]:.3f}, {obs['ee_pos'][2]:.3f}",
                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
-            # Show images
             cv2.imshow("Camera View", combined)
             
-            # Process mouse clicks
             if clicked_point is not None:
                 x, y = clicked_point
-                clicked_point = None  # Reset click
+                clicked_point = None  
                 
                 # Check if click is in the RGB frame (left half of combined image)
                 if x < rgb_frame.shape[1]:
-                    # Get 3D point in robot base frame
                     point_base = camera.get_3d_point_robot_base(x, y)
                     
                     if point_base is not None:
@@ -139,18 +126,13 @@ def main():
                         movement_vector = point_base - current_pos
                         
                         # Scale movement for safety
-                        movement_vector = movement_vector * pos_sensitivity
+                        movement_vector = movement_vector 
                         
-                        # Create action (x, y, z, gripper)
                         action = np.zeros(4)
                         action[:3] = movement_vector
-                        
-                        # Execute action
-                        print(f"Moving to target: {point_base}")
                         obs, reward, terminated, truncated, info = env.step(action)
                         
-                        # Display information
-                        print(f"New end-effector position: {obs['ee_pos'][:3]}")
+                        print(f"New end-effector position: {obs}")
                         env.render()
                     else:
                         print("Invalid depth at clicked point")
@@ -166,13 +148,13 @@ def main():
                 env.render()
             elif key == ord('z'):
                 # Close gripper
-                action = np.array([0.0, 0.0, 0.0, 1.0 * gripper_sensitivity])
+                action = np.array([0.0, 0.0, 0.0, 1.0 * gripper_sensitivity])  # TODO check if it is delta
                 obs, reward, terminated, truncated, info = env.step(action)
                 print(f"Closing gripper. Position: {obs['ee_pos'][3]}")
                 env.render()
             elif key == ord('x'):
                 # Open gripper
-                action = np.array([0.0, 0.0, 0.0, -1.0 * gripper_sensitivity])
+                action = np.array([0.0, 0.0, 0.0, -1.0 * gripper_sensitivity]) # TODO check if it is delta
                 obs, reward, terminated, truncated, info = env.step(action)
                 print(f"Opening gripper. Position: {obs['ee_pos'][3]}")
                 env.render()
