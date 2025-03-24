@@ -406,7 +406,7 @@ class D455Camera:
             print(f"Point ({x}, {y}) is outside of depth frame bounds ({width}x{height})")
             return None
         
-        depth_value = depth_frame[y, x] /1000
+        depth_value = depth_frame[y, x] /1000.0
         
         # Convert depth to meters 
         if depth_value == 0:
@@ -466,7 +466,7 @@ class D455Camera:
         point_homogeneous = np.append(point_camera, 1.0)
         
         # Transform to robot base coordinates
-        point_base = np.linalg.inv(self.T_base_camera) @ point_homogeneous
+        point_base = self.T_base_camera @ point_homogeneous
         
         # Return just the 3D coordinates
         return point_base[:3]

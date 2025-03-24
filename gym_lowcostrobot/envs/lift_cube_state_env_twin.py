@@ -77,6 +77,9 @@ class LiftCubeStateEnv(Env):
         self._initialize_observation_space(observation_mode, include_initial_obj_pose)
         self._initialize_renderer(render_mode, render_obs)
         self._initialize_task_variables(use_action_noise)
+        
+        # Add camera visualization
+        self._initialize_camera_visualization()
     
     def _initialize_dynamixel(self):
         """Initialize the Dynamixel hardware interface"""
@@ -198,6 +201,43 @@ class LiftCubeStateEnv(Env):
         # Koch 1.1的工作空间限制
         self.ee_min = np.array([-0.5, -0.5, 0.01])  # 更大的工作空间
         self.ee_max = np.array([0.5, 0.5, 0.5])
+
+    def _initialize_camera_visualization(self):
+        """Initialize camera visualization by loading the calibration matrix"""
+        # Path to the calibration matrix
+        self.calibration_path = os.path.join('results', 'calibration_matrix.npy') #  TODO set path via input
+        self.camera_viz_initialized = False
+        self.last_calibration_check = 0  # Last time we checked for calibration file
+        self.calibration_check_interval = 1.0  # Check every 1 second
+        
+        # Load the calibration matrix if it exists
+        self._load_calibration_matrix()
+
+    def _load_calibration_matrix(self):
+        """Load the camera calibration matrix from file"""
+        if os.path.exists(self.calibration_path):
+            try:
+                self.T_base_camera = np.load(self.calibration_path)
+                print(f"Loaded camera calibration matrix from {self.calibration_path}")
+                
+                # Extract camera position and orientation
+                self.camera_pos = self.T_base_camera[:3, 3]  # Position vector
+                self.camera_rot = self.T_base_camera[:3, :3]  # Rotation matrix
+                
+                # Calculate camera axis endpoints for visualization
+                self.axis_length = 0.05  # 5cm axes
+                self.camera_x_endpoint = self.camera_pos + self.camera_rot[:, 0] * self.axis_length
+                self.camera_y_endpoint = self.camera_pos + self.camera_rot[:, 1] * self.axis_length
+                self.camera_z_endpoint = self.camera_pos + self.camera_rot[:, 2] * self.axis_length
+                
+                self.camera_viz_initialized = True
+                print(f"Camera position: {self.camera_pos}")
+                return True
+            except Exception as e:
+                print(f"Error loading camera calibration matrix: {e}")
+                return False
+        else:
+            return False
 
     def radian_to_position(self, values):
         """Convert radian values to Dynamixel position values"""
@@ -513,6 +553,17 @@ class LiftCubeStateEnv(Env):
     def render(self):
         """Render the environment"""
         if self.render_mode == "human":
+            # Check for calibration file periodically
+            current_time = time.time()
+            if (not self.camera_viz_initialized and 
+                current_time - self.last_calibration_check > self.calibration_check_interval):
+                self.last_calibration_check = current_time
+                self._load_calibration_matrix()
+            
+            # Add camera visualization
+            if self.camera_viz_initialized:
+                self._render_camera_visualization()
+            
             self.viewer.sync()
         elif self.render_mode == "rgb_array":
             self.renderer.update_scene(self.data, camera="camera_front")
@@ -522,6 +573,63 @@ class LiftCubeStateEnv(Env):
             # Concatenate the images
             combined_img = np.concatenate([wrist_img, front_img], 1)
             return combined_img
+    
+    def _render_camera_visualization(self):
+        """Add camera visualization to the MuJoCo scene using markers"""
+        # Add markers for camera position and orientation
+        # MuJoCo markers are temporary visualizations that don't affect the simulation
+        
+        # Define marker properties
+        marker_pos = self.camera_pos
+        marker_size = 0.02  # 2cm sphere
+        line_width = 2
+        
+        # Get viewer scene to add markers
+        scene = self.viewer.user_scn
+        
+        # Add camera position marker (sphere)
+        mujoco.mjv_initGeom(
+            scene.geoms[scene.ngeom], 
+            mujoco.mjtGeom.mjGEOM_SPHERE, 
+            np.array([marker_size, 0, 0]), 
+            marker_pos, 
+            np.array([0, 0, 0, 1]), 
+            np.array([0.2, 0.2, 0.2, 0.8])  # Dark gray, semi-transparent
+        )
+        scene.ngeom += 1
+        
+        # Add X axis (red line)
+        mujoco.mjv_initGeom(
+            scene.geoms[scene.ngeom], 
+            mujoco.mjtGeom.mjGEOM_LINE, 
+            np.array([line_width, 0, 0]), 
+            marker_pos, 
+            self.camera_x_endpoint, 
+            np.array([1, 0, 0, 1])  # Red
+        )
+        scene.ngeom += 1
+        
+        # Add Y axis (green line)
+        mujoco.mjv_initGeom(
+            scene.geoms[scene.ngeom], 
+            mujoco.mjtGeom.mjGEOM_LINE, 
+            np.array([line_width, 0, 0]), 
+            marker_pos, 
+            self.camera_y_endpoint, 
+            np.array([0, 1, 0, 1])  # Green
+        )
+        scene.ngeom += 1
+        
+        # Add Z axis (blue line)
+        mujoco.mjv_initGeom(
+            scene.geoms[scene.ngeom], 
+            mujoco.mjtGeom.mjGEOM_LINE, 
+            np.array([line_width, 0, 0]), 
+            marker_pos, 
+            self.camera_z_endpoint, 
+            np.array([0, 0, 1, 1])  # Blue
+        )
+        scene.ngeom += 1
 
     def close(self):
         """Close the environment"""
