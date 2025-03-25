@@ -6,8 +6,10 @@ __pycache__/
 data_traces/*
 demos/
 
+# Custom 
 lerobot/
-
+camera_output/
+checkpoints/
 # C extensions
 *.so
 *.hdf5
