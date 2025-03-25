@@ -466,7 +466,7 @@ class D455Camera:
         point_homogeneous = np.append(point_camera, 1.0)
         
         # Transform to robot base coordinates
-        point_base = self.T_base_camera @ point_homogeneous
+        point_base = self.T_base_camera @ point_homogeneous # TODO may be an error!
         
         # Return just the 3D coordinates
         return point_base[:3]
