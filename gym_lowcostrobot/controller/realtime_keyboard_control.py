@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np
 import gymnasium as gym
-from gym_lowcostrobot.envs.lift_cube_state_env_twin import LiftCubeStateEnv
+from gym_lowcostrobot.envs.lift_cube_state_env_real import LiftCubeStateEnv
 from pynput import keyboard
 
 # Global variables

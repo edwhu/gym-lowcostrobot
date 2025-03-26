@@ -3,7 +3,7 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 import time
-from gym_lowcostrobot.envs.lift_cube_state_env_twin import LiftCubeStateEnv
+from gym_lowcostrobot.envs.lift_cube_state_env_real import LiftCubeStateEnv
 
 def visualize_camera_pose():
     """

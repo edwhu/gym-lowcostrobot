@@ -8,7 +8,7 @@ import numpy as np
 import cv2
 import gymnasium as gym
 import gym_lowcostrobot
-from gym_lowcostrobot.envs.lift_cube_state_env_twin import LiftCubeStateEnv
+from gym_lowcostrobot.envs.lift_cube_state_env_real import LiftCubeStateEnv
 from gym_lowcostrobot.camera.d455 import D455Camera
 
 # Global variables for mouse callback
