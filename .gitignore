@@ -5,6 +5,10 @@ __pycache__/
 .vscode/
 data_traces/*
 demos/
+data/
+results/
+realsense/
+analyze_demos.py
 
 # Custom 
 lerobot/

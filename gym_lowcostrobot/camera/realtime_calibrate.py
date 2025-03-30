@@ -41,7 +41,7 @@ class RealtimeCalibrator(SimpleCalibrator):
         # NOTICE: you need to read the marker position via moving the robot eef to it
         self.T_base_marker = np.array([
             [1, 0, 0, -0.025],  # x translation from  
-            [0, 1, 0, 0.025],  # y translation from  
+            [0, 1, 0, 0.0375],  # y translation from  
             [0, 0, 1, 0.0],   # z translation from  
             [0, 0, 0, 1]
         ])
@@ -61,7 +61,7 @@ class RealtimeCalibrator(SimpleCalibrator):
         self.camera.stop()
         cv2.destroyAllWindows()
         
-    def process_frame(self, rgb_frame, depth_frame, marker_size=0.02):
+    def process_frame(self, rgb_frame, depth_frame, marker_size=0.05):
         """Process a single frame for calibration"""
         gray = cv2.cvtColor(rgb_frame, cv2.COLOR_BGR2GRAY)
         

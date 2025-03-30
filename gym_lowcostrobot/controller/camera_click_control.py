@@ -8,7 +8,8 @@ import numpy as np
 import cv2
 import gymnasium as gym
 import gym_lowcostrobot
-from gym_lowcostrobot.envs.lift_cube_state_env_real import LiftCubeStateEnv
+from gym_lowcostrobot.envs.lift_cube_state_env_real import LiftCubeStateRealEnv
+from gym_lowcostrobot.envs.lift_cube_state_env import LiftCubeStateEnv
 from gym_lowcostrobot.camera.d455 import D455Camera
 
 # Global variables for mouse callback
@@ -65,7 +66,6 @@ def main():
         observation_mode="both",
         render_mode="human", 
         action_mode="nullspace", 
-        use_action_noise=False
     )
     
     obs, info = env.reset()
@@ -93,6 +93,7 @@ def main():
             
             if rgb_frame is None or depth_frame is None:
                 print("Failed to get frames")
+                time.sleep(0.1)
                 continue
             
             depth_colormap = cv2.applyColorMap(
@@ -122,19 +123,19 @@ def main():
                         print(f"3D point in robot base frame: {point_base}")
                         
                         # Calculate movement vector (from current position to target)
-                        current_pos = obs['ee_pos'][:3]
-                        movement_vector = point_base - current_pos
+                        # current_pos = obs['ee_pos'][:3]
+                        # movement_vector = point_base - current_pos
                         
-                        # Scale movement for safety
-                        movement_vector = movement_vector 
+                        # # Scale movement for safety
+                        # movement_vector = movement_vector 
                         
-                        action = np.zeros(4)
-                        action[:3] = movement_vector
-                        action = env.get_scaled_action(action)
+                        # action = np.zeros(4)
+                        # action[:3] = movement_vector
+                        # action = env.get_scaled_action(action)
                         
-                        obs, reward, terminated, truncated, info = env.step(action)
+                        # obs, reward, terminated, truncated, info = env.step(action)
                         
-                        print(f"New end-effector position: {obs['ee_pos']}")
+                        # print(f"New end-effector position: {obs['ee_pos']}")
                         env.render()
                     else:
                         print("Invalid depth at clicked point")

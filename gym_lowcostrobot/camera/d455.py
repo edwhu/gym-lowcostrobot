@@ -55,8 +55,10 @@ class D455Camera:
         self.align_frames = align_frames
         self.device_id = device_id
         self.output_dir = output_dir
+        self.video_dir = os.path.join('realsense', 'videos')
         
         os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(self.video_dir, exist_ok=True)
         
         # Initialize camera state
         self.pipeline = None
@@ -70,6 +72,11 @@ class D455Camera:
         
         # Calibration data
         self.T_base_camera = np.eye(4)  
+        
+        # Video buffer
+        self.frame_buffer = []
+        self.is_buffering = False
+        self.max_buffer_size = 1000  # Maximum frames to store in buffer
         
         self.initialize_streaming()
         
@@ -302,7 +309,8 @@ class D455Camera:
             
             if rgb_frame is not None:
                 rgb_path = os.path.join(self.output_dir, f"rgb_{timestamp}.png")
-                cv2.imwrite(rgb_path, rgb_frame)
+                bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(rgb_path, bgr_frame)
                 print(f"Saved RGB frame to {rgb_path}")
             
             if depth_frame is not None:
@@ -320,36 +328,6 @@ class D455Camera:
                 print(f"Saved depth frame to {depth_path} and {depth_raw_path}")
         
         return rgb_frame, depth_frame
-    
-    def _record_frames(self, duration: float, interval: float):
-        """
-        Background thread function for recording frames.
-        
-        Args:
-            duration: Duration to record in seconds (0 for indefinite)
-            interval: Interval between frames in seconds
-        """
-        start_time = time.time()
-        self.frame_count = 0
-        
-        print(f"Recording started. Duration: {duration if duration > 0 else 'indefinite'} seconds")
-        
-        while self.is_recording:
-            # Check if duration has elapsed
-            if duration > 0 and (time.time() - start_time) >= duration:
-                break
-            
-            # Capture frame
-            rgb_frame, depth_frame = self.capture_frame(save=True)
-            
-            if rgb_frame is not None or depth_frame is not None:
-                self.frame_count += 1
-            
-            # Wait for next frame
-            time.sleep(interval)
-        
-        self.is_recording = False
-        print(f"Recording stopped. Captured {self.frame_count} frames")
     
     def start_recording(self, duration: float = 0, interval: float = 0.1):
         """
@@ -370,6 +348,10 @@ class D455Camera:
             print("Already recording")
             return False
         
+        # Reset frame buffer when starting a new recording
+        self.frame_buffer = []
+        self.is_buffering = True
+        
         self.is_recording = True
         self.recording_thread = Thread(
             target=self._record_frames,
@@ -384,11 +366,120 @@ class D455Camera:
             self.is_recording = False
             if self.recording_thread:
                 self.recording_thread.join(timeout=2.0)
+            
+            # Save buffered video after recording stops
+            if self.is_buffering and len(self.frame_buffer) > 0:
+                self.save_buffered_video()
+                self.is_buffering = False
+            
             print("Recording stopped")
             return True
         else:
             print("Not currently recording")
             return False
+    
+    def _record_frames(self, duration: float, interval: float):
+        """
+        Background thread function for recording frames.
+        
+        Args:
+            duration: Duration to record in seconds (0 for indefinite)
+            interval: Interval between frames in seconds
+        """
+        start_time = time.time()
+        self.frame_count = 0
+        
+        print(f"Recording started. Duration: {duration if duration > 0 else 'indefinite'} seconds")
+        
+        while self.is_recording:
+            # Check if duration has elapsed
+            if duration > 0 and (time.time() - start_time) >= duration:
+                break
+            
+            # Capture frame
+            rgb_frame, depth_frame = self.get_frames()
+            
+            if rgb_frame is not None:
+                self.frame_count += 1
+                # Add RGB frame to buffer if buffering is enabled
+                if self.is_buffering and len(self.frame_buffer) < self.max_buffer_size:
+                    self.frame_buffer.append(rgb_frame.copy())
+            
+            # Save individual frames if needed
+            self.capture_frame(save=True)
+            
+            # Wait for next frame
+            time.sleep(interval)
+        
+        self.is_recording = False
+        print(f"Recording stopped. Captured {self.frame_count} frames")
+    
+    def add_to_buffer(self, frame):
+        """
+        Add a frame to the video buffer.
+        
+        Args:
+            frame: RGB frame to add to buffer
+        """
+        if self.is_buffering and len(self.frame_buffer) < self.max_buffer_size:
+            self.frame_buffer.append(frame.copy())
+    
+    def clear_buffer(self):
+        """Clear the video buffer."""
+        self.frame_buffer = []
+    
+    def save_buffered_video(self, filename=None):
+        """
+        Save the buffered frames as a video file.
+        
+        Args:
+            filename: Optional filename (without extension)
+                     If None, a timestamp-based filename will be used
+        
+        Returns:
+            Path to the saved video file or None if failed
+        """
+        if not self.frame_buffer or len(self.frame_buffer) == 0:
+            print("No frames in buffer to save")
+            return None
+        
+        try:
+            # Create timestamp-based filename if not provided
+            if filename is None:
+                timestamp = int(time.time())
+                filename = f"rgb_video_{timestamp}"
+            
+            # Ensure video directory exists
+            os.makedirs(self.video_dir, exist_ok=True)
+            
+            # Create full file path
+            video_path = os.path.join(self.video_dir, f"{filename}.mp4")
+            
+            # Get frame properties
+            height, width = self.frame_buffer[0].shape[:2]
+            
+            # Create video writer
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            video_writer = cv2.VideoWriter(
+                video_path, fourcc, self.fps, (width, height)
+            )
+            
+            # Write all frames
+            for frame in self.frame_buffer:
+                video_writer.write(frame)
+            
+            # Release the writer
+            video_writer.release()
+            
+            print(f"Saved {len(self.frame_buffer)} frames to video: {video_path}")
+            return video_path
+            
+        except Exception as e:
+            print(f"Error saving video: {e}")
+            return None
+        finally:
+            # Clear buffer after saving
+            self.clear_buffer()
     
     def get_depth_at_point(self, x: int, y: int) -> float:
         if not (self.is_running and self.enable_depth):
@@ -645,7 +736,7 @@ def test_camera():
             # Get frames
             rgb_frame, depth_frame = camera.get_frames()
             
-            if rgb_frame is None or depth_frame is None:
+            if rgb_frame is None and depth_frame is None:
                 print("Failed to get frames")
                 time.sleep(0.1)
                 continue

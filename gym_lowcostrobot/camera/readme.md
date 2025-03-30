@@ -62,7 +62,7 @@ T_base_camera = T_base_marker @ inv(T_camera_marker)
 
 4. If the xyz axis of the marker is aligned with the robot base frame, press 'S' to save the calibration matrix.
 
-5. Test the calibration by running `python lowcostrobot/controller/realtime_click_control.py`
+5. Test the calibration by running `python lowcostrobot/controller/camera_click_control.py`
    - Click the object and see the pos difference between the goal position and the end position
 
 ---
