@@ -505,15 +505,15 @@ class D455Camera:
         
         return depth_value    # Convert to meters
     
-    def get_3d_point(self, x: int, y: int) -> np.ndarray:
+    def get_3d_point(self, x: int, y: int, depth_frame: np.ndarray) -> np.ndarray:
         if not (self.is_running and self.enable_depth):
             print("Camera is not running or depth is not enabled")
             return None
         
-        _, depth_frame = self.get_frames()
+        # _, depth_frame = self.get_frames()
         
-        if depth_frame is None:
-            return None
+        # if depth_frame is None:
+        #     return None
         
         height, width = depth_frame.shape
         
@@ -536,7 +536,7 @@ class D455Camera:
         # Convert to meters
         return np.array(point) / 1000.0
     
-    def get_3d_point_robot_base(self, x: int, y: int) -> np.ndarray:
+    def get_3d_point_robot_base(self, x: int, y: int, depth_frame: np.ndarray) -> np.ndarray:
         """
         Get 3D point at pixel coordinate in robot base frame.
         
@@ -548,7 +548,7 @@ class D455Camera:
             3D point in robot base coordinate system [x, y, z] in meters
         """
         # Get point in camera coordinates
-        point_camera = self.get_3d_point(x, y)
+        point_camera = self.get_3d_point(x, y, depth_frame)
         
         if point_camera is None:
             return None
@@ -799,6 +799,85 @@ def test_camera():
         cv2.destroyAllWindows()
         print("\nCamera test completed.")
 
+def test_camera_under_latency():
+    """Test the D455 camera functionality with intentional latency between frame queries."""
+    print("\n=== Testing RealSense D455 Camera with Latency ===")
+    
+    try:
+        # Create camera object
+        camera = D455Camera(
+            enable_rgb=True,
+            enable_depth=True,
+            rgb_resolution=(848, 480),
+            depth_resolution=(848, 480),
+            fps=30,
+            align_frames=True
+        )
+        
+        # Start camera
+        print("Starting camera stream...")
+        if not camera.start():
+            print("Failed to start camera")
+            return
+            
+        # Create display window
+        print("Starting display loop with 0.5s delay between frames...")
+        print("Press 'ESC' or 'q' to exit")
+        
+        cv2.namedWindow("Camera Test with Latency", cv2.WINDOW_AUTOSIZE)
+        
+        # Test with intentional delay
+        for i in range(100):  # Capture 100 frames or until user exits
+            # Add intentional delay
+            time.sleep(5)
+            
+            # Get frames
+            start_time = time.time()
+            rgb_frame, depth_frame = camera.get_frames()
+            frame_time = time.time() - start_time
+            
+            if rgb_frame is None or depth_frame is None:
+                print(f"Frame {i}: Failed to get frames")
+                continue
+                
+            # Convert depth to color map for visualization
+            depth_colormap = cv2.applyColorMap(
+                cv2.convertScaleAbs(depth_frame, alpha=0.03),
+                cv2.COLORMAP_JET
+            )
+            
+            # Combine images side by side
+            combined = np.hstack((rgb_frame, depth_colormap))
+            
+            # Add frame information
+            cv2.putText(combined, 
+                       f"Frame: {i} | Capture time: {frame_time*1000:.1f}ms",
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Show images
+            cv2.imshow("Camera Test with Latency", combined)
+            print(f"Frame {i} captured (took {frame_time*1000:.1f}ms)")
+            
+            # Check for key press to exit
+            key = cv2.waitKey(1)
+            if key == 27 or key == ord('q'):  # ESC or q key
+                print("User interrupted test")
+                break
+                
+    except Exception as e:
+        print(f"\nError during camera test: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        # Clean up
+        print("Cleaning up...")
+        if 'camera' in locals():
+            camera.stop()
+        cv2.destroyAllWindows()
+        print("Latency test completed.")
+
 
 if __name__ == "__main__":
-    test_camera()
+    # test_camera()
+    test_camera_under_latency()

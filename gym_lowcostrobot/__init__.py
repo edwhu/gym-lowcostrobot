@@ -78,8 +78,8 @@ def register_robotics_envs():
     register(
         id="LiftCubeStateReal-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateRealEnv",
-        max_episode_steps=100,
-        kwargs={"observation_mode":"state", "action_mode":"nullspace", "render_mode":"rgb_array"}
+        max_episode_steps=40,
+        kwargs={"observation_mode":"state", "action_mode":"nullspace", "render_mode":"rgb_array", "disable_env_checker":True}
     )
     register(
         id="LiftCubeStateOpenLoop-v0",

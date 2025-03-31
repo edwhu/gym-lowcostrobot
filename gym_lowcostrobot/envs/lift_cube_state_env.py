@@ -91,8 +91,8 @@ class LiftCubeStateEnv(Env):
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
         # used for bounding the nullspace controller
-        self.action_min = np.array([-0.1, -0.1, -0.1, -1])
-        self.action_max = np.array([0.1, 0.1, 0.1, 1])
+        self.action_min = np.array([-0.1, -0.1, -0.1, -1], dtype=np.float32)
+        self.action_max = np.array([0.1, 0.1, 0.1, 1], dtype=np.float32)
 
     def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         # Set the observations space
@@ -104,6 +104,7 @@ class LiftCubeStateEnv(Env):
             "touch": spaces.Box(low=-10.0, high=10.0, shape=(2,)),
             "arm_qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
             "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
+            "gripper_blocked": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
         }
         self.include_initial_obj_pose = include_initial_obj_pose
         if include_initial_obj_pose:
@@ -385,16 +386,37 @@ class LiftCubeStateEnv(Env):
 
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
+        observation["gripper_blocked"] = np.zeros((1,), dtype=np.float32)
+        # Store the initial arm joint positions to track gripper movement
+        self.last_qpos = self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].copy()
         # info = {'image_front': observation['image_front']}
         info = {'qpos': self.data.qpos.copy(), 'ee_pos': self.get_ee_pos()}
         return observation, info
 
     def step(self, action):
+        # Save the gripper position before the action
+        gripper_before_action = self.last_qpos[-1]
+        
         # Perform the action and step the simulation
         action_info = self.apply_action(action)
+        
+        # Get the gripper displacement from the raw action
+        gripper_displacement = action_info['raw_action'][-1] if 'raw_action' in action_info else 0.0
 
         # Get the new observation
         observation = self.get_observation()
+        
+        # Current gripper position after the action
+        gripper_after_action = self.data.qpos[self.arm_dof_id+self.nb_dof-1]
+        
+        # Update last_qpos for the next step
+        self.last_qpos = self.data.qpos[self.arm_dof_id:self.arm_dof_id+self.nb_dof].copy()
+
+        # Check if the gripper is holding the object by comparing expected vs actual position
+        expected_gripper_pos = gripper_before_action + gripper_displacement
+        expected_gripper_pos = np.clip(expected_gripper_pos, self.qpos_min[-1], self.qpos_max[-1])
+        gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.05
+        observation['gripper_blocked'] = np.array([float(gripper_blocked)], dtype=np.float32)
 
         # Get the position of the cube and the distance between the end effector and the cube
         cube_pos = self.data.qpos[self.cube_dof_id:self.cube_dof_id+3]
@@ -403,7 +425,9 @@ class LiftCubeStateEnv(Env):
         ee_pos = self.data.site_xpos[ee_id]
         ee_to_cube = np.linalg.norm(ee_pos - cube_pos)
 
-        terminated = cube_z >= self.threshold_height and ee_to_cube < 0.05
+        # Check for success - consider gripper_blocked in the success condition
+        success_height = cube_z >= self.threshold_height
+        terminated = success_height and (ee_to_cube < 0.05 or (gripper_blocked and observation["touch"].all()))
         observation["log_is_success"] = np.ones((1,), dtype=np.float32) * terminated
         reward = 0
         if terminated:

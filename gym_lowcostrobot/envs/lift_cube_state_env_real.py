@@ -16,13 +16,16 @@ from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
 from gym_lowcostrobot.envs.dynamixel import Dynamixel
 from gym_lowcostrobot.envs.robot import Robot
 
+import cv2
+from gym_lowcostrobot.camera.d455 import D455Camera
+
 
 
 # DEVICE_NAME='/dev/ttyACM0'
 # DEVICE_NAME='/dev/tty.usbmodem58760435361'
 # DEVICE_NAME='/dev/tty.usbmodem585A0085321'
 MOTOR_3_BIAS = 30
-ACTION_SLEEP_SEC = 0.1
+ACTION_SLEEP_SEC = 0.5
 
 class LiftCubeStateRealEnv(Env):
     """
@@ -83,7 +86,7 @@ class LiftCubeStateRealEnv(Env):
     
     def _initialize_dynamixel(self):
         self.real_qpos_min = np.array([906, 0, 0, 0, 0, 2040]) # you may need to tune per robot
-        self.real_qpos_max = np.array([3202, 4095,4095,4095,4095,2878])
+        self.real_qpos_max = np.array([3202, 4095,4095,4095,4095,2877])
         self.qpos_min = self.position_to_radian(self.real_qpos_min)
         self.qpos_max = self.position_to_radian(self.real_qpos_max)
         if 'KOCH_DEVICE_NAME' not in os.environ:
@@ -92,6 +95,7 @@ class LiftCubeStateRealEnv(Env):
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
         self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
+        self.initial_qpos_before_camera = np.array([-1.2, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
         assert np.all(self.initial_qpos >= self.qpos_min) and np.all(self.initial_qpos <= self.qpos_max)
 
         self.motor_3_bias = MOTOR_3_BIAS
@@ -129,8 +133,8 @@ class LiftCubeStateRealEnv(Env):
         action_shape = {"joint": 6, "ee": 4, "nullspace": 4}[action_mode]
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(action_shape,), dtype=np.float32)
         # used for bounding the nullspace controller
-        self.action_min = np.array([-0.1, -0.1, -0.1, -0.3])
-        self.action_max = np.array([0.1, 0.1, 0.1, 0.3])
+        self.action_min = np.array([-0.1, -0.1, -0.1, -0.3], dtype=np.float32)
+        self.action_max = np.array([0.1, 0.1, 0.1, 0.3], dtype=np.float32)
 
     def _initialize_observation_space(self, observation_mode, include_initial_obj_pose):
         # Set the observations space
@@ -139,7 +143,13 @@ class LiftCubeStateRealEnv(Env):
             "arm_qpos": spaces.Box(low=-np.inf, high=np.inf, shape=(6,)),
             "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
             "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
+            "gripper_blocked": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
+            "target_eepos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
+            "rgb": spaces.Box(low=0, high=255, shape=(480, 848, 3), dtype=np.uint8),
+            "depth": spaces.Box(low=0, high=65535, shape=(480, 848), dtype=np.uint16),
         }
+        # initialize the camera
+        self.init_camera()
         self.include_initial_obj_pose = include_initial_obj_pose
         if include_initial_obj_pose:
             self.initial_obj_pose = np.zeros((7,), dtype=np.float32)
@@ -186,8 +196,8 @@ class LiftCubeStateRealEnv(Env):
         self.joint_names = [f"joint_{i}" for i in range(1, 7)]
 
         # workspace bounds for the ee 
-        self.ee_min = np.array([-0.15, -0.05, 0.012])
-        self.ee_max = np.array([-0.07, 0.05, 0.1])
+        self.ee_min = np.array([-0.15, -0.1, 0.012])
+        self.ee_max = np.array([-0.07, 0.1, 0.1])
 
     def diffik_nullspace(
         self,
@@ -345,12 +355,128 @@ class LiftCubeStateRealEnv(Env):
                 img = np.zeros((64, 64, 3), dtype=np.uint8)
             observation["log_image_front"] = img
 
+        # get rgb and depth images
+        # time.sleep(0.1)
+        # rgb_img, depth_img = self.camera.get_frames()
+        # observation["rgb"] = rgb_img
+        # observation["depth"] = depth_img
+        # debug: use zeros for now
+        observation["rgb"] = np.zeros((480, 848, 3), dtype=np.uint8)
+        observation["depth"] = np.zeros((480, 848), dtype=np.uint16)
+
+
         return observation
+
+    def mouse_callback(self, event, x, y, flags, param):
+        global clicked_point
+        if event == cv2.EVENT_LBUTTONDOWN:
+            clicked_point = (x, y)
+            print(f"Clicked at pixel coordinates: ({x}, {y})")
+
+
+    def init_camera(self):
+        """Initialize the camera for object targeting."""
+        # Load calibration matrix
+        calibration_path = os.path.join('results', 'calibration_matrix.npy')
+        if not os.path.exists(calibration_path):
+            print(f"Calibration matrix not found at {calibration_path}. Using camera without calibration.")
+            self.T_base_camera = None
+        else:
+            self.T_base_camera = np.load(calibration_path)
+            print(f"Loaded calibration matrix:\n{self.T_base_camera}")
+        
+        # Initialize camera
+        self.camera = D455Camera(
+            enable_rgb=True,
+            enable_depth=True,
+            rgb_resolution=(848, 480),
+            depth_resolution=(848, 480),
+            fps=30,
+            align_frames=True
+        )
+        
+        if self.T_base_camera is not None:
+            self.camera.set_calibration_matrix(self.T_base_camera)
+        
+        if not self.camera.start():
+            raise RuntimeError("Failed to start camera. Cannot proceed without camera for object targeting.")
+    
+    def get_target_from_user(self):
+        """Show camera feed and let user click on the object to set target position.
+        
+        Raises:
+            RuntimeError: If camera is not available or target cannot be detected
+        """
+        global clicked_point, rgb_frame, depth_frame
+        
+        if self.camera is None:
+        #     self.init_camera()
+            raise RuntimeError("Camera not available. Cannot proceed without camera for object targeting.")
+        
+        clicked_point = None
+        cv2.namedWindow("Click on the object")
+        cv2.setMouseCallback("Click on the object", self.mouse_callback)
+        
+        print("\n=== Camera-Based Object Targeting ===")
+        print("Click on the object in the camera view")
+        print("Press 'q' to cancel")
+        print("======================================\n")
+        
+        while clicked_point is None:
+            rgb_frame, depth_frame = self.camera.get_frames()
+            
+            if rgb_frame is None or depth_frame is None:
+                print("Failed to get frames")
+                time.sleep(0.1)
+                continue
+            
+            depth_colormap = cv2.applyColorMap(
+                cv2.convertScaleAbs(depth_frame, alpha=0.03),
+                cv2.COLORMAP_JET
+            )
+            
+            combined = np.hstack((rgb_frame, depth_colormap))
+            cv2.putText(combined, 
+                       "Click on the object to set target position",
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            cv2.imshow("Click on the object", combined)
+            
+            key = cv2.waitKey(1)
+            if key == ord('q') or key == 27:
+                cv2.destroyWindow("Click on the object")
+                raise RuntimeError("User canceled target selection.")
+        
+        # User clicked on the object
+        x, y = clicked_point
+        cv2.destroyWindow("Click on the object")
+        
+        # Check if click is in the RGB frame (left half of combined image)
+        if x < rgb_frame.shape[1]:
+            point_base = self.camera.get_3d_point_robot_base(x, y)
+            
+            if point_base is not None:
+                print(f"3D target point in robot base frame: {point_base}")
+                return point_base
+        
+        raise RuntimeError("Invalid depth at clicked point or point outside RGB frame. Cannot determine target position.")
+
+    def move_robot_to_pre_camera_position(self):
+        real_qpos_pre_camera = self.radian_to_position(self.initial_qpos_before_camera)
+        real_qpos_pre_camera[2] += self.motor_3_bias
+        self.realrobot.set_goal_pos(real_qpos_pre_camera)
+        time.sleep(ACTION_SLEEP_SEC)
+
 
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed, options=options)
         
+        self.move_robot_to_pre_camera_position()
+        self.target = self.get_target_from_user()
+        # self.target[0] = -0.15
+        print(f"Target: {self.target}")
+
         # Reset the robot to the initial position and sample the cube position
         cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
         cube_rot = np.array([1.0, 0.0, 0.0, 0.0])
@@ -422,6 +548,8 @@ class LiftCubeStateRealEnv(Env):
         
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
+        observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
+        observation['target_eepos'] = self.target
         # info = {'image_front': observation['image_front']}
         # info = {'qpos': self.data.qpos.copy(), 'target_qpos': real_qpos, 'ee_pos': self.get_ee_pos()}
         # info['real_robot_target_qpos'] = real_qpos
@@ -448,7 +576,9 @@ class LiftCubeStateRealEnv(Env):
         expected_gripper_pos = gripper_before_action + gripper_displacement
         # clip the expected gripper pos to the limits
         expected_gripper_pos = np.clip(expected_gripper_pos, self.qpos_min[-1], self.qpos_max[-1])
-        gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.1
+        gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.05
+        observation['gripper_blocked'] = np.array([float(gripper_blocked)], dtype=np.float32)
+        observation['target_eepos'] = self.target
         # print('gripper before action', gripper_before_action)
         # print('gripper displacement', gripper_displacement)
         # print('gripper after action', gripper_after_action)

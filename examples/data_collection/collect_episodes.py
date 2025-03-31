@@ -12,6 +12,7 @@ Features:
 - Support for both simulation and real robot environments
 - Automatic episode collection and storage
 - Gamepad debugging mode for input testing
+- Camera-based object targeting for scripted policy
 
 Usage:
     python collect_episodes.py [--mode {gamepad,random,learned,debug_gamepad}] [--sim]
@@ -42,10 +43,27 @@ import time
 import argparse
 from typing import Dict, Any, Callable, Tuple, Optional
 import os
+import cv2
+from gym_lowcostrobot.camera.d455 import D455Camera
 # Type aliases for better readability
 Observation = Dict[str, Any]
 Action = np.ndarray
 Policy = Callable[[Observation], Tuple[Action, bool]]
+
+
+RGB_EPISODES = []
+DEPTH_EPISODES = []
+
+# Global variables for mouse callback
+clicked_point = None
+rgb_frame = None
+depth_frame = None
+
+def mouse_callback(event, x, y, flags, param):
+    global clicked_point
+    if event == cv2.EVENT_LBUTTONDOWN:
+        clicked_point = (x, y)
+        print(f"Clicked at pixel coordinates: ({x}, {y})")
 
 def prepare_frame_data(
     obs: Observation,
@@ -68,6 +86,8 @@ def prepare_frame_data(
     Returns:
         Dictionary containing the frame data
     """
+    RGB_EPISODES[-1].append(obs["rgb"])
+    DEPTH_EPISODES[-1].append(obs["depth"])
     return {
         "task": task_name,
         "action": action,
@@ -76,6 +96,8 @@ def prepare_frame_data(
         "terminated": np.array([terminated], dtype=bool),
         # "observation.images.log_image_front": obs["log_image_front"],
         "observation.arm_qpos": obs["arm_qpos"],
+        "observation.rgb": obs["rgb"],
+        "observation.depth": obs["depth"],
     }
 
 def collect_episodes(
@@ -94,15 +116,18 @@ def collect_episodes(
         num_episodes: Number of episodes to collect
         task_name: Description of the task being performed
     """
+    print("TODO: Collect terminal observation, currently not doing that.")
     for ep_idx in range(num_episodes):
         print(f"Collecting episode {ep_idx+1}/{num_episodes}")
-        
-        obs, _ = env.reset()
+        RGB_EPISODES.append([])
+        DEPTH_EPISODES.append([])
+        obs, _ = env.reset()            
         done = False
         frame_idx = 0
         
         while not done:
             action, should_reset = policy(obs)
+            print(f"Action: {action}")
             if should_reset:
                 print(f"Episode {ep_idx+1} reset and skipped.")
                 break
@@ -115,7 +140,7 @@ def collect_episodes(
             
             obs = next_obs
             frame_idx += 1
-            
+    
         if not should_reset:
             dataset.save_episode()
             print(f"Episode {ep_idx+1} completed with {frame_idx} frames")
@@ -136,11 +161,16 @@ def create_dataset(
         LeRobotDataset instance
     """
     features = {
-        # "observation.images.log_image_front": {
-        #     "dtype": "video",
-        #     "shape": (64, 64, 3),
-        #     "names": ["height", "width", "channels"]
-        # },
+        "observation.rgb": {
+            "dtype": "video",
+            "shape": (480, 848, 3),
+            "names": ["height", "width", "channels"]
+        },
+        "observation.depth": {
+            "dtype": "uint16",
+            "shape": (480, 848),
+            "names": ["height", "width"]
+        },
         "observation.arm_qpos": {
             "dtype": "float32",
             "shape": (6,),
@@ -293,6 +323,109 @@ def run_random_collection(env: gym.Env) -> None:
     finally:
         env.close()
 
+class ScriptedLiftPolicy:
+    """A scripted policy for the lift cube task with camera-based object targeting."""
+    
+    def __init__(self, env):
+        # Store environment for action scaling
+        self.env = env
+        
+        # Control parameters
+        self.xy_error = 0.007
+        self.x_offset = 0.01
+        self.z_limit = 0.038
+        self.z_offset = 0.02
+        self.z_step = 0.007
+        self.z_desc_limit = 0.01
+        self.z_desc_error = -0.003
+        self.g_grasp = 0.9
+        self.g_close = 0.1
+        self.target = None
+
+    def __call__(self, obs: Observation) -> Tuple[Action, bool]:
+        """Generate actions based on current observation.
+        
+        Args:
+            obs: Current observation from the environment
+            
+        Returns:
+            Tuple of (action array, reset flag)
+        """
+        self.target = obs['target_eepos']
+        
+        blocked = obs["gripper_blocked"]
+        ee_pos = obs['ee_pos']
+        target = self.target.copy()  # Use the camera-set target
+        target[0] += self.x_offset
+
+        x, y, z, g = ee_pos[0], ee_pos[1], ee_pos[2], ee_pos[3]
+        dx, dy, dz = target - ee_pos[:3]
+        
+        action = np.zeros(4, dtype=np.float32)
+       
+        if (abs(dx) <= self.xy_error and abs(dy) <= self.xy_error) or blocked:
+            if self.z_desc_limit - z < self.z_desc_error and not blocked:
+                # Above target - approaching
+                action[3] = max(0, self.g_grasp - g)
+                action[2] = min(0, np.sign(self.z_desc_limit - z) * self.z_step)
+            else:
+                # At target - gripping or lifting
+                if blocked:
+                    # Lifting
+                    action[3] = min(0, self.g_close - g)
+                    action[2] = 3 * self.z_step
+                elif self.g_close-g > -0.03:
+                    action = np.array([0, 0, 0.05, 0], dtype=np.float32)
+                    print("!!! gripping failed. Resetting")
+                else:
+                    # Gripping
+                    action[3] = min(0, self.g_close - g)
+        else:
+            # Moving to target xy position
+            if abs(dx) > self.xy_error:
+                action[0] = dx
+            if abs(dy) > self.xy_error:
+                action[1] = dy
+            if z < self.z_limit:
+                action[2] = self.z_offset
+
+        # Scale the action before returning it
+        scaled_action = self.env.unwrapped.get_scaled_action(action)
+        return scaled_action, False
+    
+
+def run_scripted_policy_collection(env: gym.Env) -> None:
+    """Run the environment with a scripted policy to collect data."""
+    try:
+        dataset_path = Path("./data/koch_robot_dataset_scripted")
+        dataset = create_dataset(
+            repo_id="gym-lowcostrobot/koch_robot_dataset_scripted",
+            root_path=dataset_path,
+            fps=30
+        )
+        
+        policy = ScriptedLiftPolicy(env=env)
+        try:
+            collect_episodes(env, policy, dataset, num_episodes=2,
+                            task_name="Lift cube task (scripted policy)")
+            
+            print(f"Dataset collected and saved to {dataset_path}")
+            # Save RGB and DEPTH episodes using pickle?
+            import pickle
+            data = {
+                "rgb": RGB_EPISODES,
+                "depth": DEPTH_EPISODES
+            }
+            with open(dataset_path / "rgb_depth_data.pkl", "wb") as f:
+                pickle.dump(data, f)
+
+        finally:
+            # policy.cleanup()
+            pass
+    
+    finally:
+        env.close()
+
 def run_learned_policy_collection(env: gym.Env) -> None:
     """Run the environment with a learned policy to collect data.
     
@@ -347,9 +480,9 @@ def run_debug_gamepad() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Collect robot data using gamepad, random policy, or learned policy.')
     parser.add_argument('--mode', type=str, 
-                      choices=['gamepad', 'random', 'learned', 'debug_gamepad'], 
+                      choices=['gamepad', 'random', 'learned', 'scripted', 'debug_gamepad'], 
                       default='gamepad', 
-                      help='Collection mode: gamepad for human control, random for baseline, learned for policy')
+                      help='Collection mode: gamepad for human control, random for baseline, learned for policy')   
     parser.add_argument('--sim', action='store_true', help='Run in simulation mode')
     parser.add_argument('--koch_device', type=str, default='/dev/ttyACM0', help='Koch device to use: auto, real, sim')
     args = parser.parse_args()
@@ -369,7 +502,9 @@ if __name__ == "__main__":
         elif args.mode == 'random':
             print("Running random policy collection mode (baseline)...")
             run_random_collection(env)
+        elif args.mode == 'scripted':
+            print("Running scripted policy collection mode...")
+            run_scripted_policy_collection(env)
         else:  # learned
             print("Running learned policy collection mode (placeholder)...")
             run_learned_policy_collection(env)
-
