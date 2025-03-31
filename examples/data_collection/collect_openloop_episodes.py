@@ -86,8 +86,8 @@ def prepare_frame_data(
     Returns:
         Dictionary containing the frame data
     """
-    RGB_EPISODES[-1].append(obs["rgb"])
-    DEPTH_EPISODES[-1].append(obs["depth"])
+    # RGB_EPISODES[-1].append(obs["rgb"])
+    # DEPTH_EPISODES[-1].append(obs["depth"])
     return {
         "task": task_name,
         "action": action,
@@ -116,7 +116,7 @@ def collect_episodes(
         num_episodes: Number of episodes to collect
         task_name: Description of the task being performed
     """
-    print("TODO: Collect terminal observation, currently not doing that.")
+    print("TODO: need to collect terminal observation, currently not doing that.")
     for ep_idx in range(num_episodes):
         print(f"Collecting episode {ep_idx+1}/{num_episodes}")
         RGB_EPISODES.append([])
@@ -127,7 +127,7 @@ def collect_episodes(
         
         while not done:
             action, should_reset = policy(obs)
-            print(f"Action: {action}")
+            print(f"step: {frame_idx}, act: {action}")
             if should_reset:
                 print(f"Episode {ep_idx+1} reset and skipped.")
                 break
@@ -144,6 +144,7 @@ def collect_episodes(
         if not should_reset:
             dataset.save_episode()
             print(f"Episode {ep_idx+1} completed with {frame_idx} frames")
+        dataset.clear_episode_buffer()
 
 def create_dataset(
     repo_id: str,

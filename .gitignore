@@ -9,6 +9,7 @@ data/
 results/
 realsense/
 analyze_demos.py
+color_segmentation_results/
 
 # Custom 
 lerobot/

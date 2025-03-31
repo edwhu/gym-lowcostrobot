@@ -356,13 +356,9 @@ class LiftCubeStateRealEnv(Env):
             observation["log_image_front"] = img
 
         # get rgb and depth images
-        # time.sleep(0.1)
-        # rgb_img, depth_img = self.camera.get_frames()
-        # observation["rgb"] = rgb_img
-        # observation["depth"] = depth_img
-        # debug: use zeros for now
-        observation["rgb"] = np.zeros((480, 848, 3), dtype=np.uint8)
-        observation["depth"] = np.zeros((480, 848), dtype=np.uint16)
+        rgb_img, depth_img = self.camera.get_frames()
+        observation["rgb"] = rgb_img
+        observation["depth"] = depth_img
 
 
         return observation
@@ -410,7 +406,6 @@ class LiftCubeStateRealEnv(Env):
         global clicked_point, rgb_frame, depth_frame
         
         if self.camera is None:
-        #     self.init_camera()
             raise RuntimeError("Camera not available. Cannot proceed without camera for object targeting.")
         
         clicked_point = None
@@ -437,8 +432,8 @@ class LiftCubeStateRealEnv(Env):
             
             combined = np.hstack((rgb_frame, depth_colormap))
             cv2.putText(combined, 
-                       "Click on the object to set target position",
-                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                "Click on the object to set target position",
+                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             
             cv2.imshow("Click on the object", combined)
             
@@ -453,7 +448,7 @@ class LiftCubeStateRealEnv(Env):
         
         # Check if click is in the RGB frame (left half of combined image)
         if x < rgb_frame.shape[1]:
-            point_base = self.camera.get_3d_point_robot_base(x, y)
+            point_base = self.camera.get_3d_point_robot_base(x, y, depth_frame)
             
             if point_base is not None:
                 print(f"3D target point in robot base frame: {point_base}")
@@ -474,7 +469,6 @@ class LiftCubeStateRealEnv(Env):
         
         self.move_robot_to_pre_camera_position()
         self.target = self.get_target_from_user()
-        # self.target[0] = -0.15
         print(f"Target: {self.target}")
 
         # Reset the robot to the initial position and sample the cube position
@@ -545,7 +539,7 @@ class LiftCubeStateRealEnv(Env):
 
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
-        
+
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
@@ -557,9 +551,6 @@ class LiftCubeStateRealEnv(Env):
             'qpos': qpos,
             'real_qpos': real_qpos,
         }
-        # for telling if the object is in the hand.
-        self.gripper_history = deque(maxlen=4)
-        self.gripper_history.append(False)
         return observation, info
 
     def step(self, action):

@@ -190,6 +190,7 @@ class D455Camera:
             if self.enable_depth:
                 depth_frame_raw = frames.get_depth_frame()
                 if depth_frame_raw:
+                    depth_frame_raw.keep() # important if you are storing depth_frame in a list later.
                     depth_frame = np.asanyarray(depth_frame_raw.get_data())
             
             return rgb_frame, depth_frame
