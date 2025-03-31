@@ -62,7 +62,7 @@ def main():
         print("Failed to start camera")
         return
     
-    env = LiftCubeStateEnv(
+    env = LiftCubeStateRealEnv(
         observation_mode="both",
         render_mode="human", 
         action_mode="nullspace", 
@@ -117,25 +117,25 @@ def main():
                 
                 # Check if click is in the RGB frame (left half of combined image)
                 if x < rgb_frame.shape[1]:
-                    point_base = camera.get_3d_point_robot_base(x, y)
+                    point_base = camera.get_3d_point_robot_base(x, y, depth_frame)
                     
                     if point_base is not None:
                         print(f"3D point in robot base frame: {point_base}")
                         
                         # Calculate movement vector (from current position to target)
-                        # current_pos = obs['ee_pos'][:3]
-                        # movement_vector = point_base - current_pos
+                        current_pos = obs['ee_pos'][:3]
+                        movement_vector = point_base - current_pos
                         
-                        # # Scale movement for safety
-                        # movement_vector = movement_vector 
+                        # Scale movement for safety
+                        movement_vector = movement_vector 
                         
-                        # action = np.zeros(4)
-                        # action[:3] = movement_vector
-                        # action = env.get_scaled_action(action)
+                        action = np.zeros(4)
+                        action[:3] = movement_vector
+                        action = env.get_scaled_action(action)
                         
-                        # obs, reward, terminated, truncated, info = env.step(action)
+                        obs, reward, terminated, truncated, info = env.step(action)
                         
-                        # print(f"New end-effector position: {obs['ee_pos']}")
+                        print(f"New end-effector position: {obs['ee_pos']}")
                         env.render()
                     else:
                         print("Invalid depth at clicked point")
