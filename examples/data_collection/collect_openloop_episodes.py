@@ -89,6 +89,7 @@ def prepare_frame_data(
     # Make a copy of the RGB and depth arrays to avoid modifying the originals
     rgb = obs["rgb"]
     depth = obs["depth"]
+
     segmentation = None
     
     # Apply color segmentation if config is provided
@@ -103,20 +104,24 @@ def prepare_frame_data(
             x1, y1, x2, y2 = crop_region
             rgb = rgb[y1:y2, x1:x2]
             depth = depth[y1:y2, x1:x2]
-        
+            # rgb and depth should have the same height and width
+            assert rgb.shape[0] == depth.shape[0] and rgb.shape[1] == depth.shape[1]
+
         # Create segmentation mask using HSV thresholds
         if hsv_lower is not None and hsv_upper is not None:
-            # Since OpenCV works with BGR but our image is RGB, convert RGB to BGR first
-            bgr_for_cv = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            # Convert BGR to HSV
-            hsv = cv2.cvtColor(bgr_for_cv, cv2.COLOR_BGR2HSV)
+            # Note, rgb is actually in BGR.
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_BGR2HSV)
             # Create mask using HSV thresholds
             segmentation = cv2.inRange(hsv, hsv_lower, hsv_upper)
-            # Convert to boolean mask
-            segmentation = segmentation > 0
+            segmentation = cv2.cvtColor(segmentation, cv2.COLOR_GRAY2RGB)
             # convert back to RGB
             rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-
+            
+            # save the images for debugging here:
+            # print(segmentation.max())
+            # cv2.imwrite("rgb.png", rgb)
+            # cv2.imwrite("segmentation.png", segmentation_img)
+            # import ipdb; ipdb.set_trace()
     frame_data = {
         "task": task_name,
         "action": action,
@@ -216,9 +221,9 @@ def create_dataset(
             "names": None
         },
         "observation.segmentation": {
-            "dtype": "bool",
-            "shape": segmentation_shape,
-            "names": ["height", "width"]
+            "dtype": "video",
+            "shape": rgb_shape,
+            "names": ["height", "width", "channels"]
         },
         "action": {
             "dtype": "float32",
