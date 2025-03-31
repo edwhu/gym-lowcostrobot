@@ -44,15 +44,13 @@ import argparse
 from typing import Dict, Any, Callable, Tuple, Optional
 import os
 import cv2
+import yaml
 from gym_lowcostrobot.camera.d455 import D455Camera
 # Type aliases for better readability
 Observation = Dict[str, Any]
 Action = np.ndarray
 Policy = Callable[[Observation], Tuple[Action, bool]]
 
-
-RGB_EPISODES = []
-DEPTH_EPISODES = []
 
 # Global variables for mouse callback
 clicked_point = None
@@ -71,7 +69,8 @@ def prepare_frame_data(
     reward: float,
     done: bool,
     terminated: bool,
-    task_name: str = "Robot Task"
+    task_name: str = "Robot Task",
+    color_segmentation_config: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """Prepare a single frame of data for the dataset.
     
@@ -82,13 +81,43 @@ def prepare_frame_data(
         done: Whether the episode is done
         terminated: Whether the episode was terminated (vs truncated)
         task_name: Description of the task being performed
+        color_segmentation_config: Configuration for color segmentation
         
     Returns:
         Dictionary containing the frame data
     """
-    # RGB_EPISODES[-1].append(obs["rgb"])
-    # DEPTH_EPISODES[-1].append(obs["depth"])
-    return {
+    # Make a copy of the RGB and depth arrays to avoid modifying the originals
+    rgb = obs["rgb"]
+    depth = obs["depth"]
+    segmentation = None
+    
+    # Apply color segmentation if config is provided
+    if color_segmentation_config is not None:
+        # Extract crop region and HSV thresholds from config
+        crop_region = color_segmentation_config.get('crop_region')
+        hsv_lower = np.array(color_segmentation_config.get('lower'))
+        hsv_upper = np.array(color_segmentation_config.get('upper'))
+        
+        # Crop RGB and depth images if crop region is defined
+        if crop_region is not None:
+            x1, y1, x2, y2 = crop_region
+            rgb = rgb[y1:y2, x1:x2]
+            depth = depth[y1:y2, x1:x2]
+        
+        # Create segmentation mask using HSV thresholds
+        if hsv_lower is not None and hsv_upper is not None:
+            # Since OpenCV works with BGR but our image is RGB, convert RGB to BGR first
+            bgr_for_cv = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            # Convert BGR to HSV
+            hsv = cv2.cvtColor(bgr_for_cv, cv2.COLOR_BGR2HSV)
+            # Create mask using HSV thresholds
+            segmentation = cv2.inRange(hsv, hsv_lower, hsv_upper)
+            # Convert to boolean mask
+            segmentation = segmentation > 0
+            # convert back to RGB
+            rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+
+    frame_data = {
         "task": task_name,
         "action": action,
         "reward": np.array([reward], dtype=np.float32),
@@ -96,16 +125,23 @@ def prepare_frame_data(
         "terminated": np.array([terminated], dtype=bool),
         # "observation.images.log_image_front": obs["log_image_front"],
         "observation.arm_qpos": obs["arm_qpos"],
-        "observation.rgb": obs["rgb"],
-        "observation.depth": obs["depth"],
+        "observation.rgb": rgb,
+        "observation.depth": depth,
     }
+    
+    # Add segmentation mask if available
+    if segmentation is not None:
+        frame_data["observation.segmentation"] = segmentation
+    
+    return frame_data
 
 def collect_episodes(
     env: gym.Env,
     policy: Policy,
     dataset: LeRobotDataset,
     num_episodes: int,
-    task_name: str = "Robot Task"
+    task_name: str = "Robot Task",
+    color_segmentation_config: Optional[Dict] = None
 ) -> None:
     """Collect episodes using the given policy and store them in a LeRobotDataset.
     
@@ -115,12 +151,11 @@ def collect_episodes(
         dataset: LeRobotDataset instance to store the episodes
         num_episodes: Number of episodes to collect
         task_name: Description of the task being performed
+        color_segmentation_config: Configuration for color segmentation
     """
     print("TODO: need to collect terminal observation, currently not doing that.")
     for ep_idx in range(num_episodes):
         print(f"Collecting episode {ep_idx+1}/{num_episodes}")
-        RGB_EPISODES.append([])
-        DEPTH_EPISODES.append([])
         obs, _ = env.reset()            
         done = False
         frame_idx = 0
@@ -135,7 +170,7 @@ def collect_episodes(
             next_obs, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
             
-            frame = prepare_frame_data(obs, action, reward, done, terminated, task_name)
+            frame = prepare_frame_data(obs, action, reward, done, terminated, task_name, color_segmentation_config)
             dataset.add_frame(frame)
             
             obs = next_obs
@@ -149,7 +184,10 @@ def collect_episodes(
 def create_dataset(
     repo_id: str,
     root_path: Optional[Path] = None,
-    fps: int = 30
+    fps: int = 30,
+    rgb_shape: Optional[Tuple[int, int, int]] = None,
+    depth_shape: Optional[Tuple[int, int]] = None,
+    segmentation_shape: Optional[Tuple[int, int]] = None
 ) -> LeRobotDataset:
     """Create a LeRobotDataset for storing episodes.
     
@@ -164,18 +202,23 @@ def create_dataset(
     features = {
         "observation.rgb": {
             "dtype": "video",
-            "shape": (480, 848, 3),
+            "shape": rgb_shape,
             "names": ["height", "width", "channels"]
         },
         "observation.depth": {
             "dtype": "uint16",
-            "shape": (480, 848),
+            "shape": depth_shape,
             "names": ["height", "width"]
         },
         "observation.arm_qpos": {
             "dtype": "float32",
             "shape": (6,),
             "names": None
+        },
+        "observation.segmentation": {
+            "dtype": "bool",
+            "shape": segmentation_shape,
+            "names": ["height", "width"]
         },
         "action": {
             "dtype": "float32",
@@ -281,20 +324,37 @@ class GamepadController:
         self._running = False
         self.thread.join()
 
-def run_gamepad_control(env: gym.Env) -> None:
+def run_gamepad_control(env: gym.Env, color_segmentation_config: Optional[Path] = None) -> None:
     """Run the environment with gamepad control for human testing/playing."""
     controller = GamepadController(pos_sensitivity=0.2, gripper_sensitivity=1.0, rate_limit=0.0)
     
     try:
+        # Load color segmentation config
+        segmentation_config = None
+        rgb_shape, depth_shape, segmentation_shape = None, None, None
+        
+        if color_segmentation_config is not None and color_segmentation_config.exists():
+            with open(color_segmentation_config, 'r') as f:
+                segmentation_config = yaml.safe_load(f)
+                crop_region = segmentation_config['crop_region']
+                rgb_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0], 3)
+                depth_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                segmentation_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
+        
         dataset_path = Path("./data/koch_robot_dataset_human")
         dataset = create_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_human",
             root_path=dataset_path,
-            fps=30
+            fps=30,
+            rgb_shape=rgb_shape,
+            depth_shape=depth_shape,
+            segmentation_shape=segmentation_shape
         )
         
         collect_episodes(env, controller.get_action, dataset, num_episodes=5, 
-                        task_name="Lift cube task (human)")
+                        task_name="Lift cube task (human)",
+                        color_segmentation_config=segmentation_config)
         
         print(f"Dataset collected and saved to {dataset_path}")
     
@@ -302,22 +362,39 @@ def run_gamepad_control(env: gym.Env) -> None:
         controller.stop()
         env.close()
 
-def run_random_collection(env: gym.Env) -> None:
+def run_random_collection(env: gym.Env, color_segmentation_config: Optional[Path] = None) -> None:
     """Run the environment with a random policy to collect baseline data."""
     def random_policy(obs: Observation) -> Tuple[Action, bool]:
         """Simple random policy for baseline data collection."""
         return np.random.uniform(-1, 1, size=4), False
    
     try:
+        # Load color segmentation config
+        segmentation_config = None
+        rgb_shape, depth_shape, segmentation_shape = None, None, None
+        
+        if color_segmentation_config is not None and color_segmentation_config.exists():
+            with open(color_segmentation_config, 'r') as f:
+                segmentation_config = yaml.safe_load(f)
+                crop_region = segmentation_config['crop_region']
+                rgb_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0], 3)
+                depth_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                segmentation_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
+        
         dataset_path = Path("./data/koch_robot_dataset_random")
         dataset = create_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_random",
             root_path=dataset_path,
-            fps=30
+            fps=30,
+            rgb_shape=rgb_shape,
+            depth_shape=depth_shape,
+            segmentation_shape=segmentation_shape
         )
         
         collect_episodes(env, random_policy, dataset, num_episodes=10,
-                        task_name="Lift cube task (random baseline)")
+                        task_name="Lift cube task (random baseline)",
+                        color_segmentation_config=segmentation_config)
         
         print(f"Dataset collected and saved to {dataset_path}")
     
@@ -377,6 +454,8 @@ class ScriptedLiftPolicy:
                     action[2] = 3 * self.z_step
                 elif self.g_close-g > -0.03:
                     action = np.array([0, 0, 0.05, 0], dtype=np.float32)
+                    # add a small random noise to the xy of the action 
+                    action[:2] += np.random.uniform(-0.005, 0.005, size=2)
                     print("!!! gripping failed. Resetting")
                 else:
                     # Gripping
@@ -395,30 +474,37 @@ class ScriptedLiftPolicy:
         return scaled_action, False
     
 
-def run_scripted_policy_collection(env: gym.Env) -> None:
+def run_scripted_policy_collection(env: gym.Env, color_segmentation_config: Optional[Path] = None) -> None:
     """Run the environment with a scripted policy to collect data."""
     try:
+        # Load color segmentation config
+        segmentation_config = None
+        if color_segmentation_config is not None and color_segmentation_config.exists():
+            with open(color_segmentation_config, 'r') as f:
+                segmentation_config = yaml.safe_load(f)
+                crop_region = segmentation_config['crop_region']
+                rgb_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0], 3)
+                depth_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                segmentation_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
+
         dataset_path = Path("./data/koch_robot_dataset_scripted")
         dataset = create_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_scripted",
             root_path=dataset_path,
-            fps=30
+            fps=30,
+            rgb_shape=rgb_shape,
+            depth_shape=depth_shape,
+            segmentation_shape=segmentation_shape
         )
         
         policy = ScriptedLiftPolicy(env=env)
         try:
             collect_episodes(env, policy, dataset, num_episodes=2,
-                            task_name="Lift cube task (scripted policy)")
+                            task_name="Lift cube task (scripted policy)",
+                            color_segmentation_config=segmentation_config)
             
             print(f"Dataset collected and saved to {dataset_path}")
-            # Save RGB and DEPTH episodes using pickle?
-            import pickle
-            data = {
-                "rgb": RGB_EPISODES,
-                "depth": DEPTH_EPISODES
-            }
-            with open(dataset_path / "rgb_depth_data.pkl", "wb") as f:
-                pickle.dump(data, f)
 
         finally:
             # policy.cleanup()
@@ -427,7 +513,7 @@ def run_scripted_policy_collection(env: gym.Env) -> None:
     finally:
         env.close()
 
-def run_learned_policy_collection(env: gym.Env) -> None:
+def run_learned_policy_collection(env: gym.Env, color_segmentation_config: Optional[Path] = None) -> None:
     """Run the environment with a learned policy to collect data.
     
     Note: This is a placeholder function. The actual learned policy implementation
@@ -444,15 +530,32 @@ def run_learned_policy_collection(env: gym.Env) -> None:
         return np.random.uniform(-1, 1, size=4), False
    
     try:
+        # Load color segmentation config
+        segmentation_config = None
+        rgb_shape, depth_shape, segmentation_shape = None, None, None
+        
+        if color_segmentation_config is not None and color_segmentation_config.exists():
+            with open(color_segmentation_config, 'r') as f:
+                segmentation_config = yaml.safe_load(f)
+                crop_region = segmentation_config['crop_region']
+                rgb_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0], 3)
+                depth_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                segmentation_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
+                print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
+        
         dataset_path = Path("./data/koch_robot_dataset_learned")
         dataset = create_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_learned",
             root_path=dataset_path,
-            fps=30
+            fps=30,
+            rgb_shape=rgb_shape,
+            depth_shape=depth_shape,
+            segmentation_shape=segmentation_shape
         )
         
         collect_episodes(env, learned_policy, dataset, num_episodes=10,
-                        task_name="Lift cube task (learned policy)")
+                        task_name="Lift cube task (learned policy)",
+                        color_segmentation_config=segmentation_config)
         
         print(f"Dataset collected and saved to {dataset_path}")
     
@@ -486,6 +589,8 @@ if __name__ == "__main__":
                       help='Collection mode: gamepad for human control, random for baseline, learned for policy')   
     parser.add_argument('--sim', action='store_true', help='Run in simulation mode')
     parser.add_argument('--koch_device', type=str, default='/dev/ttyACM0', help='Koch device to use: auto, real, sim')
+    parser.add_argument('--color_config', type=str, default='./color_segmentation_results/color_segmentation_config.yaml',
+                      help='Path to color segmentation configuration file')
     args = parser.parse_args()
 
     os.environ['KOCH_DEVICE_NAME'] = args.koch_device
@@ -493,19 +598,26 @@ if __name__ == "__main__":
     env_id = ("LiftCubeStateGamepadHumanRender-v0" if args.mode == 'gamepad' 
               else "LiftCubeStateNoisyHumanRender-v0") if args.sim else "LiftCubeStateReal-v0"
     
+    # Set up color segmentation config path
+    color_segmentation_config = Path(args.color_config)
+    if not color_segmentation_config.exists():
+        print(f"Warning: Color segmentation config file not found at {color_segmentation_config}")
+        print("Proceeding without color segmentation and cropping.")
+        color_segmentation_config = None
+
     if args.mode == 'debug_gamepad':
         run_debug_gamepad()
     else:
         env = gym.make(env_id)
         if args.mode == 'gamepad':
             print("Running gamepad control mode...")
-            run_gamepad_control(env)
+            run_gamepad_control(env, color_segmentation_config)
         elif args.mode == 'random':
             print("Running random policy collection mode (baseline)...")
-            run_random_collection(env)
+            run_random_collection(env, color_segmentation_config)
         elif args.mode == 'scripted':
             print("Running scripted policy collection mode...")
-            run_scripted_policy_collection(env)
+            run_scripted_policy_collection(env, color_segmentation_config)
         else:  # learned
             print("Running learned policy collection mode (placeholder)...")
-            run_learned_policy_collection(env)
+            run_learned_policy_collection(env, color_segmentation_config)

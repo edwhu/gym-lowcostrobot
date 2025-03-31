@@ -39,9 +39,10 @@ class RealtimeCalibrator(SimpleCalibrator):
         # This is the position where we placed the marker relative to robot base
         # Assuming marker is placed on XY plane of robot base
         # NOTICE: you need to read the marker position via moving the robot eef to it
+        
         self.T_base_marker = np.array([
-            [1, 0, 0, -0.025],  # x translation from  
-            [0, 1, 0, 0.0375],  # y translation from  
+            [1, 0, 0, -0.067],  # x translation from  
+            [0, 1, 0, 0.101],  # y translation from  
             [0, 0, 1, 0.0],   # z translation from  
             [0, 0, 0, 1]
         ])

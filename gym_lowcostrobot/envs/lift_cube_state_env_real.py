@@ -76,7 +76,8 @@ class LiftCubeStateRealEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array", "none"], "render_fps": 200}
 
-    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False):
+    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False, use_camera=False):
+        self.use_camera = use_camera
         self._initialize_dynamixel()
         self._initialize_mujoco()
         self._initialize_action_space(action_mode)
@@ -95,7 +96,9 @@ class LiftCubeStateRealEnv(Env):
         self.dynamixel = Dynamixel.Config(baudrate=1_000_000, device_name=DEVICE_NAME).instantiate()
         self.realrobot = Robot(self.dynamixel)
         self.initial_qpos = np.array([-0.017867, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
-        self.initial_qpos_before_camera = np.array([-1.2, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
+        # self.initial_qpos_before_camera = np.array([-1.2, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
+        self.initial_qpos_before_camera = np.array([1.0, 0.005605, -0.131519, -1.433267, 1.552938, 0.8])
+
         assert np.all(self.initial_qpos >= self.qpos_min) and np.all(self.initial_qpos <= self.qpos_max)
 
         self.motor_3_bias = MOTOR_3_BIAS
@@ -144,12 +147,20 @@ class LiftCubeStateRealEnv(Env):
             "ee_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
             "log_is_success": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
             "gripper_blocked": spaces.Box(low=-np.inf, high=np.inf, dtype="float32"),
-            "target_eepos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
-            "rgb": spaces.Box(low=0, high=255, shape=(480, 848, 3), dtype=np.uint8),
-            "depth": spaces.Box(low=0, high=65535, shape=(480, 848), dtype=np.uint16),
         }
-        # initialize the camera
-        self.init_camera()
+
+        # Only add camera-related spaces if use_camera is True
+        if self.use_camera:
+            self.observation_subspaces.update({
+                "target_eepos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
+                "rgb": spaces.Box(low=0, high=255, shape=(480, 848, 3), dtype=np.uint8),
+                "depth": spaces.Box(low=0, high=65535, shape=(480, 848), dtype=np.uint16),
+            })
+            # initialize the camera
+            self.init_camera()
+        else:
+            self.camera = None
+
         self.include_initial_obj_pose = include_initial_obj_pose
         if include_initial_obj_pose:
             self.initial_obj_pose = np.zeros((7,), dtype=np.float32)
@@ -258,6 +269,9 @@ class LiftCubeStateRealEnv(Env):
 
             goal_pos = ee_action + self.data.site("attachment_site").xpos
             # clip the goal pos to ee bounds
+            # warn if goal_pos is outside the ee bounds
+            if np.any(goal_pos < self.ee_min) or np.any(goal_pos > self.ee_max):
+                print(f"Goal pos is outside the ee bounds: {goal_pos}")
             goal_pos = np.clip(goal_pos, self.ee_min, self.ee_max)
 
             # goal_quat = np.array([0.7071, 0.7071, 0, 0]) # rotate 90 on x axis to make gripper point downwards.
@@ -355,11 +369,11 @@ class LiftCubeStateRealEnv(Env):
                 img = np.zeros((64, 64, 3), dtype=np.uint8)
             observation["log_image_front"] = img
 
-        # get rgb and depth images
-        rgb_img, depth_img = self.camera.get_frames()
-        observation["rgb"] = rgb_img
-        observation["depth"] = depth_img
-
+        # Only add camera observations if use_camera is True
+        if self.use_camera:
+            rgb_img, depth_img = self.camera.get_frames()
+            observation["rgb"] = rgb_img
+            observation["depth"] = depth_img
 
         return observation
 
@@ -467,9 +481,10 @@ class LiftCubeStateRealEnv(Env):
         # We need the following line to seed self.np_random
         super().reset(seed=seed, options=options)
         
-        self.move_robot_to_pre_camera_position()
-        self.target = self.get_target_from_user()
-        print(f"Target: {self.target}")
+        if self.use_camera:
+            self.move_robot_to_pre_camera_position()
+            self.target = self.get_target_from_user()
+            print(f"Target: {self.target}")
 
         # Reset the robot to the initial position and sample the cube position
         cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
@@ -543,7 +558,8 @@ class LiftCubeStateRealEnv(Env):
         observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
-        observation['target_eepos'] = self.target
+        if self.use_camera:
+            observation['target_eepos'] = self.target
         # info = {'image_front': observation['image_front']}
         # info = {'qpos': self.data.qpos.copy(), 'target_qpos': real_qpos, 'ee_pos': self.get_ee_pos()}
         # info['real_robot_target_qpos'] = real_qpos
@@ -569,7 +585,8 @@ class LiftCubeStateRealEnv(Env):
         expected_gripper_pos = np.clip(expected_gripper_pos, self.qpos_min[-1], self.qpos_max[-1])
         gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.05
         observation['gripper_blocked'] = np.array([float(gripper_blocked)], dtype=np.float32)
-        observation['target_eepos'] = self.target
+        if self.use_camera:
+            observation['target_eepos'] = self.target
         # print('gripper before action', gripper_before_action)
         # print('gripper displacement', gripper_displacement)
         # print('gripper after action', gripper_after_action)
