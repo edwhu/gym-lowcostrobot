@@ -207,7 +207,7 @@ class LiftCubeStateRealEnv(Env):
         self.joint_names = [f"joint_{i}" for i in range(1, 7)]
 
         # workspace bounds for the ee 
-        self.ee_min = np.array([-0.15, -0.1, 0.012])
+        self.ee_min = np.array([-0.15, -0.1, 0.012]) # z-axis should be lower, like 0.010 (likely not impacting the data)
         self.ee_max = np.array([-0.07, 0.1, 0.1])
 
     def diffik_nullspace(

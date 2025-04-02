@@ -89,7 +89,6 @@ def prepare_frame_data(
     # Make a copy of the RGB and depth arrays to avoid modifying the originals
     rgb = obs["rgb"]
     depth = obs["depth"]
-
     segmentation = None
     
     # Apply color segmentation if config is provided
@@ -161,7 +160,7 @@ def collect_episodes(
     print("TODO: need to collect terminal observation, currently not doing that.")
     for ep_idx in range(num_episodes):
         print(f"Collecting episode {ep_idx+1}/{num_episodes}")
-        obs, _ = env.reset()            
+        obs, _ = env.reset()
         done = False
         frame_idx = 0
         
@@ -186,7 +185,7 @@ def collect_episodes(
             print(f"Episode {ep_idx+1} completed with {frame_idx} frames")
         dataset.clear_episode_buffer()
 
-def create_dataset(
+def create_or_load_dataset(
     repo_id: str,
     root_path: Optional[Path] = None,
     fps: int = 30,
@@ -194,67 +193,77 @@ def create_dataset(
     depth_shape: Optional[Tuple[int, int]] = None,
     segmentation_shape: Optional[Tuple[int, int]] = None
 ) -> LeRobotDataset:
-    """Create a LeRobotDataset for storing episodes.
+    """Create a new LeRobotDataset or load an existing one.
     
     Args:
         repo_id: Repository ID for the dataset
-        root_path: Local path to store the dataset (if None, uses default cache)
+        root_path: Local path to store/load the dataset (if None, uses default cache)
         fps: Frames per second for the dataset
+        rgb_shape: Shape of RGB images
+        depth_shape: Shape of depth images
+        segmentation_shape: Shape of segmentation masks
         
     Returns:
         LeRobotDataset instance
     """
-    features = {
-        "observation.rgb": {
-            "dtype": "video",
-            "shape": rgb_shape,
-            "names": ["height", "width", "channels"]
-        },
-        "observation.depth": {
-            "dtype": "uint16",
-            "shape": depth_shape,
-            "names": ["height", "width"]
-        },
-        "observation.arm_qpos": {
-            "dtype": "float32",
-            "shape": (6,),
-            "names": None
-        },
-        "observation.segmentation": {
-            "dtype": "video",
-            "shape": rgb_shape,
-            "names": ["height", "width", "channels"]
-        },
-        "action": {
-            "dtype": "float32",
-            "shape": (4,),
-            "names": None
-        },
-        "reward": {
-            "dtype": "float32",
-            "shape": (1,),
-            "names": None
-        },
-        "done": {
-            "dtype": "bool",
-            "shape": (1,),
-            "names": None
-        },
-        "terminated": {
-            "dtype": "bool",
-            "shape": (1,),
-            "names": None
-        },
-    }
-    
-    return LeRobotDataset.create(
-        repo_id=repo_id,
-        fps=fps,
-        root=root_path,
-        features=features,
-        use_videos=True,
-        video_backend='pyav'
-    )
+    # Try to load existing dataset first
+    try:
+        dataset = LeRobotDataset(repo_id=repo_id, root=root_path)
+        print(f"Loaded existing dataset from {root_path}")
+        return dataset
+    except (FileNotFoundError, NotADirectoryError):
+        print(f"Creating new dataset at {root_path}")
+        features = {
+            "observation.rgb": {
+                "dtype": "video",
+                "shape": rgb_shape,
+                "names": ["height", "width", "channels"]
+            },
+            "observation.depth": {
+                "dtype": "uint16",
+                "shape": depth_shape,
+                "names": ["height", "width"]
+            },
+            "observation.arm_qpos": {
+                "dtype": "float32",
+                "shape": (6,),
+                "names": None
+            },
+            "observation.segmentation": {
+                "dtype": "video",
+                "shape": rgb_shape,
+                "names": ["height", "width", "channels"]
+            },
+            "action": {
+                "dtype": "float32",
+                "shape": (4,),
+                "names": None
+            },
+            "reward": {
+                "dtype": "float32",
+                "shape": (1,),
+                "names": None
+            },
+            "done": {
+                "dtype": "bool",
+                "shape": (1,),
+                "names": None
+            },
+            "terminated": {
+                "dtype": "bool",
+                "shape": (1,),
+                "names": None
+            },
+        }
+        
+        return LeRobotDataset.create(
+            repo_id=repo_id,
+            fps=fps,
+            root=root_path,
+            features=features,
+            use_videos=True,
+            video_backend='pyav'
+        )
 
 class GamepadController:
     """Controller class for handling gamepad input and mapping it to robot actions."""
@@ -348,7 +357,7 @@ def run_gamepad_control(env: gym.Env, color_segmentation_config: Optional[Path] 
                 print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
         
         dataset_path = Path("./data/koch_robot_dataset_human")
-        dataset = create_dataset(
+        dataset = create_or_load_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_human",
             root_path=dataset_path,
             fps=30,
@@ -388,7 +397,7 @@ def run_random_collection(env: gym.Env, color_segmentation_config: Optional[Path
                 print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
         
         dataset_path = Path("./data/koch_robot_dataset_random")
-        dataset = create_dataset(
+        dataset = create_or_load_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_random",
             root_path=dataset_path,
             fps=30,
@@ -414,7 +423,7 @@ class ScriptedLiftPolicy:
         self.env = env
         
         # Control parameters
-        self.xy_error = 0.007
+        self.xy_error = 0.02
         self.x_offset = 0.01
         self.z_limit = 0.038
         self.z_offset = 0.02
@@ -427,7 +436,7 @@ class ScriptedLiftPolicy:
 
     def __call__(self, obs: Observation) -> Tuple[Action, bool]:
         """Generate actions based on current observation.
-        
+        uniform
         Args:
             obs: Current observation from the environment
             
@@ -451,6 +460,8 @@ class ScriptedLiftPolicy:
                 # Above target - approaching
                 action[3] = max(0, self.g_grasp - g)
                 action[2] = min(0, np.sign(self.z_desc_limit - z) * self.z_step)
+                # add a small random noise to the action (only for the x position)
+                action[0] += np.clip(np.random.normal(0, 0.008), 0, 0.008)
             else:
                 # At target - gripping or lifting
                 if blocked:
@@ -494,7 +505,7 @@ def run_scripted_policy_collection(env: gym.Env, color_segmentation_config: Opti
                 print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
 
         dataset_path = Path("./data/koch_robot_dataset_scripted")
-        dataset = create_dataset(
+        dataset = create_or_load_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_scripted",
             root_path=dataset_path,
             fps=30,
@@ -505,7 +516,7 @@ def run_scripted_policy_collection(env: gym.Env, color_segmentation_config: Opti
         
         policy = ScriptedLiftPolicy(env=env)
         try:
-            collect_episodes(env, policy, dataset, num_episodes=2,
+            collect_episodes(env, policy, dataset, num_episodes=10,
                             task_name="Lift cube task (scripted policy)",
                             color_segmentation_config=segmentation_config)
             
@@ -549,7 +560,7 @@ def run_learned_policy_collection(env: gym.Env, color_segmentation_config: Optio
                 print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
         
         dataset_path = Path("./data/koch_robot_dataset_learned")
-        dataset = create_dataset(
+        dataset = create_or_load_dataset(
             repo_id="gym-lowcostrobot/koch_robot_dataset_learned",
             root_path=dataset_path,
             fps=30,
