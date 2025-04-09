@@ -1,6 +1,7 @@
 import os
 import time
 from collections import deque
+from typing import Tuple
 
 import gymnasium as gym
 from gymnasium import Env, spaces
@@ -11,6 +12,8 @@ import matplotlib.pyplot as plt
 import websockets
 import asyncio
 import json
+import cv2
+import yaml
 
 from gym_lowcostrobot import ASSETS_PATH, BASE_LINK_NAME
 from gym_lowcostrobot.envs.dynamixel import Dynamixel
@@ -76,8 +79,9 @@ class LiftCubeStateRealEnv(Env):
 
     metadata = {"render_modes": ["human", "rgb_array", "none"], "render_fps": 200}
 
-    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False, use_camera=False):
+    def __init__(self, observation_mode="state", action_mode="nullspace", render_mode=None, render_obs=True, include_initial_obj_pose=False, use_camera=False, use_auto_target = False):
         self.use_camera = use_camera
+        self.use_auto_target = use_auto_target
         self._initialize_dynamixel()
         self._initialize_mujoco()
         self._initialize_action_space(action_mode)
@@ -155,6 +159,7 @@ class LiftCubeStateRealEnv(Env):
                 "target_eepos": spaces.Box(low=-np.inf, high=np.inf, shape=(4,)),
                 "rgb": spaces.Box(low=0, high=255, shape=(480, 848, 3), dtype=np.uint8),
                 "depth": spaces.Box(low=0, high=65535, shape=(480, 848), dtype=np.uint16),
+                "estimated_target_pos": spaces.Box(low=-np.inf, high=np.inf, shape=(3,)),
             })
             # initialize the camera
             self.init_camera()
@@ -368,12 +373,55 @@ class LiftCubeStateRealEnv(Env):
             else:
                 img = np.zeros((64, 64, 3), dtype=np.uint8)
             observation["log_image_front"] = img
-
-        # Only add camera observations if use_camera is True
+        return observation
+    
+    def get_camera_observations(self, observation):
         if self.use_camera:
             rgb_img, depth_img = self.camera.get_frames()
-            observation["rgb"] = rgb_img
-            observation["depth"] = depth_img
+            # Extract crop region and HSV thresholds from config
+            crop_region = self.color_segmentation_config.get('crop_region')
+            hsv_lower = np.array(self.color_segmentation_config.get('lower'))
+            hsv_upper = np.array(self.color_segmentation_config.get('upper'))
+            
+            # Crop RGB and depth images 
+            x1, y1, x2, y2 = crop_region
+            rgb = rgb_img[y1:y2, x1:x2]
+            depth = depth_img[y1:y2, x1:x2]
+            assert rgb.shape[0] == depth.shape[0] and rgb.shape[1] == depth.shape[1]
+
+            # Create segmentation mask using HSV thresholds
+            hsv = cv2.cvtColor(rgb, cv2.COLOR_BGR2HSV) # Note, rgb is actually in BGR.
+            # Create mask using HSV thresholds
+            segmentation = cv2.inRange(hsv, hsv_lower, hsv_upper)
+            segmentation = cv2.cvtColor(segmentation, cv2.COLOR_GRAY2RGB)
+            observation['segmentation'] = segmentation
+
+            # convert back to RGB
+            rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+            observation["rgb"] = rgb
+            observation["depth"] = depth
+            if observation["gripper_blocked"]:
+                print("Gripper blocked, using ee pos as estimated target pos")
+                observation["estimated_target_pos"] = observation["ee_pos"][:3]
+            else:
+                # segmentation shape: (61, 168, 3) because it's cropped
+                # rgb shape: (480, 848, 3) because it's not cropped
+                # the get 3dpoint method takes in a pixel coordinate and 
+                # compute the x, y position of the pixel as the geometric center of the pixels in the cropped image where value is 255
+                y, x, _ = np.where(segmentation == 255)
+                x_center = np.mean(x).astype(np.int32)
+                y_center = np.mean(y).astype(np.int32)
+                # transform the x, y position of the pixel in the cropped image to the x, y position of the pixel in the full image
+                x_full, y_full = transform_cropped_to_full_image(x_center, y_center, x1, y1)
+                # print(f"x_center: {x_center}, y_center: {y_center}")
+                # print(f"x_full: {x_full}, y_full: {y_full}")
+                estimated_target_pos = self.camera.get_3d_point_robot_base(x_full, y_full, depth_img)
+                if estimated_target_pos is not None:
+                    observation["estimated_target_pos"] = estimated_target_pos
+                else:
+                    print(f"Object position is not in the camera view, using ee pos as estimated target pos")
+                    # import ipdb; ipdb.set_trace()
+                    observation["estimated_target_pos"] = observation["ee_pos"][:3]
 
         return observation
 
@@ -387,13 +435,24 @@ class LiftCubeStateRealEnv(Env):
     def init_camera(self):
         """Initialize the camera for object targeting."""
         # Load calibration matrix
-        calibration_path = os.path.join('results', 'calibration_matrix.npy')
+        # make the path relative to the gym-lowcostrobot directory
+        calibration_path = os.path.join(os.path.dirname(__file__), '../../', 'results', 'calibration_matrix.npy')
         if not os.path.exists(calibration_path):
-            print(f"Calibration matrix not found at {calibration_path}. Using camera without calibration.")
-            self.T_base_camera = None
+            raise RuntimeError(f"Calibration matrix not found at {calibration_path}. Using camera without calibration.")
+            # print(f"Calibration matrix not found at {calibration_path}. Using camera without calibration.")
+            # self.T_base_camera = None
         else:
             self.T_base_camera = np.load(calibration_path)
             print(f"Loaded calibration matrix:\n{self.T_base_camera}")
+        
+        # Load color segmentation config 
+        self.color_segmentation_config = None
+        color_segmentation_config_path = os.path.join(os.path.dirname(__file__), '../../', 'color_segmentation_results/', 'color_segmentation_config.yaml')
+        if not os.path.exists(color_segmentation_config_path):
+            raise RuntimeError(f"Color segmentation config not found at {color_segmentation_config_path}. Using camera without color segmentation.")
+        else:
+            with open(color_segmentation_config_path, 'r') as f:
+                self.color_segmentation_config = yaml.safe_load(f)
         
         # Initialize camera
         self.camera = D455Camera(
@@ -473,6 +532,7 @@ class LiftCubeStateRealEnv(Env):
     def move_robot_to_pre_camera_position(self):
         real_qpos_pre_camera = self.radian_to_position(self.initial_qpos_before_camera)
         real_qpos_pre_camera[2] += self.motor_3_bias
+        # print(f'Moving robot to pre-camera position: {real_qpos_pre_camera}')
         self.realrobot.set_goal_pos(real_qpos_pre_camera)
         time.sleep(ACTION_SLEEP_SEC)
 
@@ -480,11 +540,27 @@ class LiftCubeStateRealEnv(Env):
     def reset(self, seed=None, options=None):
         # We need the following line to seed self.np_random
         super().reset(seed=seed, options=options)
-        
+        self.target = None
+        observation = {}
+        observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
         if self.use_camera:
+            # Get camera frames
+            # rgb_frame, depth_frame = self.camera.get_frames()
+            # if rgb_frame is None or depth_frame is None:
+            #     raise RuntimeError("Failed to get camera frames during reset")
             self.move_robot_to_pre_camera_position()
-            self.target = self.get_target_from_user()
-            print(f"Target: {self.target}")
+            if self.use_auto_target:
+                input("Using auto target. Press Enter to continue...")
+                observation = self.get_camera_observations(observation)
+                observation['target_eepos'] = observation['estimated_target_pos']
+                self.target = observation['target_eepos']
+                print(f"Auto target: {self.target}")
+            else:
+                time.sleep(1)
+                self.target = self.get_target_from_user()
+                print(f"Target: {self.target}")
+                observation = self.get_camera_observations(observation)
+                observation['target_eepos'] = self.target
 
         # Reset the robot to the initial position and sample the cube position
         cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
@@ -555,14 +631,10 @@ class LiftCubeStateRealEnv(Env):
         # Step the simulation
         mujoco.mj_forward(self.model, self.data)
 
-        observation = self.get_observation()
+        robot_observation = self.get_observation()
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
-        if self.use_camera:
-            observation['target_eepos'] = self.target
-        # info = {'image_front': observation['image_front']}
-        # info = {'qpos': self.data.qpos.copy(), 'target_qpos': real_qpos, 'ee_pos': self.get_ee_pos()}
-        # info['real_robot_target_qpos'] = real_qpos
+        observation.update(robot_observation)
         info = {
             'qpos': qpos,
             'real_qpos': real_qpos,
@@ -587,12 +659,15 @@ class LiftCubeStateRealEnv(Env):
         observation['gripper_blocked'] = np.array([float(gripper_blocked)], dtype=np.float32)
         if self.use_camera:
             observation['target_eepos'] = self.target
+            observation = self.get_camera_observations(observation)
+
         # print('gripper before action', gripper_before_action)
         # print('gripper displacement', gripper_displacement)
         # print('gripper after action', gripper_after_action)
         # print('expected gripper pos', expected_gripper_pos)
         # print('gripper blocked', gripper_blocked)
 
+        # print(f"gripper blocked: {gripper_blocked}, ee_pos: {observation['ee_pos']}")
         success = gripper_blocked and observation['ee_pos'][2] >= 0.07
         observation["log_is_success"] = np.array([float(success)], dtype=np.float32) 
         reward = float(success) 
@@ -688,6 +763,10 @@ def start_gamepad_listener():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(receive_gamepad_input())
+
+def transform_cropped_to_full_image(pixel_x: int, pixel_y: int, x1: int, y1: int) -> Tuple[int, int]:
+    """Transform the x, y position of a pixel in the cropped image to the x, y position of the pixel in the full image."""
+    return pixel_x + x1, pixel_y + y1
 
 if __name__ == "__main__":
     import threading

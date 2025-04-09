@@ -10,6 +10,10 @@ results/
 realsense/
 analyze_demos.py
 color_segmentation_results/
+data_backup
+estimated_target_pos_img/
+estimated_target_pos_img_refactor_getobs/
+
 
 # Custom 
 lerobot/

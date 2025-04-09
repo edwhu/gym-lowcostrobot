@@ -70,7 +70,6 @@ def prepare_frame_data(
     done: bool,
     terminated: bool,
     task_name: str = "Robot Task",
-    color_segmentation_config: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """Prepare a single frame of data for the dataset.
     
@@ -86,57 +85,23 @@ def prepare_frame_data(
     Returns:
         Dictionary containing the frame data
     """
-    # Make a copy of the RGB and depth arrays to avoid modifying the originals
-    rgb = obs["rgb"]
-    depth = obs["depth"]
-    segmentation = None
-    
-    # Apply color segmentation if config is provided
-    if color_segmentation_config is not None:
-        # Extract crop region and HSV thresholds from config
-        crop_region = color_segmentation_config.get('crop_region')
-        hsv_lower = np.array(color_segmentation_config.get('lower'))
-        hsv_upper = np.array(color_segmentation_config.get('upper'))
-        
-        # Crop RGB and depth images if crop region is defined
-        if crop_region is not None:
-            x1, y1, x2, y2 = crop_region
-            rgb = rgb[y1:y2, x1:x2]
-            depth = depth[y1:y2, x1:x2]
-            # rgb and depth should have the same height and width
-            assert rgb.shape[0] == depth.shape[0] and rgb.shape[1] == depth.shape[1]
-
-        # Create segmentation mask using HSV thresholds
-        if hsv_lower is not None and hsv_upper is not None:
-            # Note, rgb is actually in BGR.
-            hsv = cv2.cvtColor(rgb, cv2.COLOR_BGR2HSV)
-            # Create mask using HSV thresholds
-            segmentation = cv2.inRange(hsv, hsv_lower, hsv_upper)
-            segmentation = cv2.cvtColor(segmentation, cv2.COLOR_GRAY2RGB)
-            # convert back to RGB
-            rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-            
-            # save the images for debugging here:
-            # print(segmentation.max())
-            # cv2.imwrite("rgb.png", rgb)
-            # cv2.imwrite("segmentation.png", segmentation_img)
-            # import ipdb; ipdb.set_trace()
     frame_data = {
         "task": task_name,
         "action": action,
         "reward": np.array([reward], dtype=np.float32),
         "done": np.array([done], dtype=bool),
         "terminated": np.array([terminated], dtype=bool),
-        # "observation.images.log_image_front": obs["log_image_front"],
         "observation.arm_qpos": obs["arm_qpos"],
-        "observation.rgb": rgb,
-        "observation.depth": depth,
+        "observation.rgb": obs["rgb"],
+        "observation.depth": obs["depth"],
+        # assumed use_camera is true
+        "observation.target_eepos": obs["target_eepos"].astype(np.float32),
+        "observation.gripper_blocked": np.array([obs["gripper_blocked"]], dtype=np.float32).reshape(-1),
+        "observation.ee_pos": obs["ee_pos"].astype(np.float32),
+        "observation.log_is_success": np.array([obs["log_is_success"]], dtype=np.float32).reshape(-1),  
+        "observation.segmentation": obs["segmentation"],
+        "observation.estimated_target_pos": obs["estimated_target_pos"].astype(np.float32),
     }
-    
-    # Add segmentation mask if available
-    if segmentation is not None:
-        frame_data["observation.segmentation"] = segmentation
-    
     return frame_data
 
 def collect_episodes(
@@ -157,9 +122,12 @@ def collect_episodes(
         task_name: Description of the task being performed
         color_segmentation_config: Configuration for color segmentation
     """
-    print("TODO: need to collect terminal observation, currently not doing that.")
+    print("TODO: need to cframeollect terminal observation, currently not doing that.")
     for ep_idx in range(num_episodes):
         print(f"Collecting episode {ep_idx+1}/{num_episodes}")
+        # reset the noise if running scripted policy
+        if isinstance(policy, ScriptedLiftPolicy):
+            policy.reset_noise()
         obs, _ = env.reset()
         done = False
         frame_idx = 0
@@ -173,8 +141,7 @@ def collect_episodes(
 
             next_obs, reward, terminated, truncated, _ = env.step(action)
             done = terminated or truncated
-            
-            frame = prepare_frame_data(obs, action, reward, done, terminated, task_name, color_segmentation_config)
+            frame = prepare_frame_data(obs, action, reward, done, terminated, task_name)
             dataset.add_frame(frame)
             
             obs = next_obs
@@ -206,64 +173,89 @@ def create_or_load_dataset(
     Returns:
         LeRobotDataset instance
     """
-    # Try to load existing dataset first
-    try:
+    # Check if the dataset already exists, if so create dataset = it
+    if os.path.exists(root_path):
         dataset = LeRobotDataset(repo_id=repo_id, root=root_path)
         print(f"Loaded existing dataset from {root_path}")
         return dataset
-    except (FileNotFoundError, NotADirectoryError):
+    else:
         print(f"Creating new dataset at {root_path}")
-        features = {
-            "observation.rgb": {
-                "dtype": "video",
-                "shape": rgb_shape,
-                "names": ["height", "width", "channels"]
-            },
-            "observation.depth": {
-                "dtype": "uint16",
-                "shape": depth_shape,
-                "names": ["height", "width"]
-            },
-            "observation.arm_qpos": {
-                "dtype": "float32",
-                "shape": (6,),
-                "names": None
-            },
-            "observation.segmentation": {
-                "dtype": "video",
-                "shape": rgb_shape,
-                "names": ["height", "width", "channels"]
-            },
-            "action": {
-                "dtype": "float32",
-                "shape": (4,),
-                "names": None
-            },
-            "reward": {
-                "dtype": "float32",
-                "shape": (1,),
-                "names": None
-            },
-            "done": {
-                "dtype": "bool",
-                "shape": (1,),
-                "names": None
-            },
-            "terminated": {
-                "dtype": "bool",
-                "shape": (1,),
-                "names": None
-            },
-        }
-        
-        return LeRobotDataset.create(
-            repo_id=repo_id,
-            fps=fps,
-            root=root_path,
-            features=features,
-            use_videos=True,
-            video_backend='pyav'
-        )
+    features = {
+        "observation.rgb": {
+            "dtype": "video",
+            "shape": rgb_shape,
+            "names": ["height", "width", "channels"]
+        },
+        "observation.depth": {
+            "dtype": "uint16",
+            "shape": depth_shape,
+            "names": ["height", "width"]
+        },
+        "observation.arm_qpos": {
+            "dtype": "float32",
+            "shape": (6,),
+            "names": None
+        },
+        "observation.segmentation": {
+            "dtype": "video",
+            "shape": rgb_shape,
+            "names": ["height", "width", "channels"]
+        },
+        "observation.target_eepos": {
+            "dtype": "float32",
+            "shape": (3,),
+            "names": None
+        },
+        "observation.gripper_blocked": {
+            "dtype": "float32", # should it be boolean?
+            "shape": (1,),
+            "names": None
+        },
+        "observation.ee_pos": {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": None
+        },
+        "observation.log_is_success": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": None
+        },
+        "observation.estimated_target_pos": {
+            "dtype": "float32",
+            "shape": (3,),
+            "names": None
+        },
+        "action": {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": None
+        },
+        "reward": {
+            "dtype": "float32",
+            "shape": (1,),
+            "names": None
+        },
+        "done": {
+            "dtype": "bool",
+            "shape": (1,),
+            "names": None
+        },
+        "terminated": {
+            "dtype": "bool",
+            "shape": (1,),
+            "names": None
+        },
+    }
+    
+    return LeRobotDataset.create(
+        repo_id=repo_id,
+        fps=fps,
+        root=root_path,
+        features=features,
+        use_videos=True,
+        video_backend='pyav'
+    )
 
 class GamepadController:
     """Controller class for handling gamepad input and mapping it to robot actions."""
@@ -417,22 +409,30 @@ def run_random_collection(env: gym.Env, color_segmentation_config: Optional[Path
 
 class ScriptedLiftPolicy:
     """A scripted policy for the lift cube task with camera-based object targeting."""
-    
+
     def __init__(self, env):
         # Store environment for action scaling
         self.env = env
         
         # Control parameters
-        self.xy_error = 0.02
-        self.x_offset = 0.01
+        self.x_error = 0.008
+        self.y_error = 0.004
+        # self.x_offset = 0.01
+        self.x_offset_noisy = 0.0
+        self.reset_noise()
         self.z_limit = 0.038
-        self.z_offset = 0.02
-        self.z_step = 0.007
+        self.z_offset = 0.01
+        self.z_step = 0.01
         self.z_desc_limit = 0.01
         self.z_desc_error = -0.003
         self.g_grasp = 0.9
         self.g_close = 0.1
         self.target = None
+        self.noise_updated = True
+
+    def reset_noise(self):
+        self.x_offset_noisy = np.clip(np.random.normal(0, 0.03), -0.02, 0.03)
+        print(f"x_offset_noisy::::::::::::: {self.x_offset_noisy}")
 
     def __call__(self, obs: Observation) -> Tuple[Action, bool]:
         """Generate actions based on current observation.
@@ -448,20 +448,21 @@ class ScriptedLiftPolicy:
         blocked = obs["gripper_blocked"]
         ee_pos = obs['ee_pos']
         target = self.target.copy()  # Use the camera-set target
-        target[0] += self.x_offset
+        # target[0] += self.x_offset
+        target[0] += self.x_offset_noisy
 
         x, y, z, g = ee_pos[0], ee_pos[1], ee_pos[2], ee_pos[3]
         dx, dy, dz = target - ee_pos[:3]
         
         action = np.zeros(4, dtype=np.float32)
        
-        if (abs(dx) <= self.xy_error and abs(dy) <= self.xy_error) or blocked:
+        if (abs(dx) <= self.x_error and abs(dy) <= self.y_error) or blocked:
             if self.z_desc_limit - z < self.z_desc_error and not blocked:
                 # Above target - approaching
                 action[3] = max(0, self.g_grasp - g)
                 action[2] = min(0, np.sign(self.z_desc_limit - z) * self.z_step)
-                # add a small random noise to the action (only for the x position)
-                action[0] += np.clip(np.random.normal(0, 0.008), 0, 0.008)
+                # add a small random noise in x direction
+                action[0] += np.random.uniform(-0.003, 0.005)
             else:
                 # At target - gripping or lifting
                 if blocked:
@@ -472,15 +473,18 @@ class ScriptedLiftPolicy:
                     action = np.array([0, 0, 0.05, 0], dtype=np.float32)
                     # add a small random noise to the xy of the action 
                     action[:2] += np.random.uniform(-0.005, 0.005, size=2)
-                    print("!!! gripping failed. Resetting")
+                    action[2] += 0.01
+                    print("!!! gripping failed. Resetting position and noise")
+                    self.reset_noise()
                 else:
                     # Gripping
                     action[3] = min(0, self.g_close - g)
+                    print(action)
         else:
             # Moving to target xy position
-            if abs(dx) > self.xy_error:
+            if abs(dx) > self.x_error:
                 action[0] = dx
-            if abs(dy) > self.xy_error:
+            if abs(dy) > self.y_error:
                 action[1] = dy
             if z < self.z_limit:
                 action[2] = self.z_offset
@@ -504,9 +508,9 @@ def run_scripted_policy_collection(env: gym.Env, color_segmentation_config: Opti
                 segmentation_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
                 print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
 
-        dataset_path = Path("./data/koch_robot_dataset_scripted")
+        dataset_path = Path("./data/koch_robot_dataset_scripted_v1.2")
         dataset = create_or_load_dataset(
-            repo_id="gym-lowcostrobot/koch_robot_dataset_scripted",
+            repo_id="edwhu/koch_robot_dataset_scripted_v1.2",
             root_path=dataset_path,
             fps=30,
             rgb_shape=rgb_shape,
@@ -529,54 +533,9 @@ def run_scripted_policy_collection(env: gym.Env, color_segmentation_config: Opti
     finally:
         env.close()
 
-def run_learned_policy_collection(env: gym.Env, color_segmentation_config: Optional[Path] = None) -> None:
-    """Run the environment with a learned policy to collect data.
-    
-    Note: This is a placeholder function. The actual learned policy implementation
-    should be added here when available.
-    """
-    def learned_policy(obs: Observation) -> Tuple[Action, bool]:
-        """Placeholder for the learned policy.
-        
-        This function should be replaced with the actual learned policy implementation.
-        Currently returns random actions as a placeholder.
-        """
-        # TODO: Replace with actual learned policy implementation
-        print("Warning: Using placeholder learned policy (random actions)")
-        return np.random.uniform(-1, 1, size=4), False
-   
-    try:
-        # Load color segmentation config
-        segmentation_config = None
-        rgb_shape, depth_shape, segmentation_shape = None, None, None
-        
-        if color_segmentation_config is not None and color_segmentation_config.exists():
-            with open(color_segmentation_config, 'r') as f:
-                segmentation_config = yaml.safe_load(f)
-                crop_region = segmentation_config['crop_region']
-                rgb_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0], 3)
-                depth_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
-                segmentation_shape = (crop_region[3] - crop_region[1], crop_region[2] - crop_region[0])
-                print(f"RGB shape: {rgb_shape}, Depth shape: {depth_shape}, Segmentation shape: {segmentation_shape}")
-        
-        dataset_path = Path("./data/koch_robot_dataset_learned")
-        dataset = create_or_load_dataset(
-            repo_id="gym-lowcostrobot/koch_robot_dataset_learned",
-            root_path=dataset_path,
-            fps=30,
-            rgb_shape=rgb_shape,
-            depth_shape=depth_shape,
-            segmentation_shape=segmentation_shape
-        )
-        
-        collect_episodes(env, learned_policy, dataset, num_episodes=10,
-                        task_name="Lift cube task (learned policy)",
-                        color_segmentation_config=segmentation_config)
-        
-        print(f"Dataset collected and saved to {dataset_path}")
-    
-    finally:
-        env.close()
+def transform_cropped_to_full_image(pixel_x: int, pixel_y: int, x1: int, y1: int) -> Tuple[int, int]:
+    """Transform the x, y position of a pixel in the cropped image to the x, y position of the pixel in the full image."""
+    return pixel_x + x1, pixel_y + y1
 
 def run_debug_gamepad() -> None:
     """Debug mode to print gamepad events and their values."""
@@ -600,7 +559,7 @@ def run_debug_gamepad() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Collect robot data using gamepad, random policy, or learned policy.')
     parser.add_argument('--mode', type=str, 
-                      choices=['gamepad', 'random', 'learned', 'scripted', 'debug_gamepad'], 
+                      choices=['gamepad', 'random', 'scripted', 'debug_gamepad'], 
                       default='gamepad', 
                       help='Collection mode: gamepad for human control, random for baseline, learned for policy')   
     parser.add_argument('--sim', action='store_true', help='Run in simulation mode')
@@ -613,7 +572,7 @@ if __name__ == "__main__":
     
     env_id = ("LiftCubeStateGamepadHumanRender-v0" if args.mode == 'gamepad' 
               else "LiftCubeStateNoisyHumanRender-v0") if args.sim else "LiftCubeStateReal-v0"
-    
+
     # Set up color segmentation config path
     color_segmentation_config = Path(args.color_config)
     if not color_segmentation_config.exists():
@@ -624,6 +583,7 @@ if __name__ == "__main__":
     if args.mode == 'debug_gamepad':
         run_debug_gamepad()
     else:
+        print(f"env_id: {env_id}")
         env = gym.make(env_id)
         if args.mode == 'gamepad':
             print("Running gamepad control mode...")
@@ -634,6 +594,3 @@ if __name__ == "__main__":
         elif args.mode == 'scripted':
             print("Running scripted policy collection mode...")
             run_scripted_policy_collection(env, color_segmentation_config)
-        else:  # learned
-            print("Running learned policy collection mode (placeholder)...")
-            run_learned_policy_collection(env, color_segmentation_config)

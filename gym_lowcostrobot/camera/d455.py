@@ -8,7 +8,7 @@ import time
 import os
 import json
 from threading import Thread
-from typing import Tuple, Optional, Dict, List, Union
+from typing import Tuple, Optional, Dict, List, Union, Any
 
 
 class D455Camera:
@@ -21,6 +21,7 @@ class D455Camera:
     - Point cloud generation
     - Frame capture and saving
     - Calibration support
+    - Post-processing filters for improved depth quality
     """
     
     def __init__(
@@ -32,7 +33,9 @@ class D455Camera:
         fps: int = 30,
         align_frames: bool = True,
         device_id: Optional[str] = None,
-        output_dir: str = 'camera_output'
+        output_dir: str = 'camera_output',
+        enable_filters: bool = True,
+        filter_config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize D455 camera driver.
@@ -46,6 +49,8 @@ class D455Camera:
             align_frames: Align depth frames to RGB frames
             device_id: Specific device ID to use (None for any available)
             output_dir: Directory to save captured frames and data
+            enable_filters: Enable depth post-processing filters
+            filter_config: Configuration dictionary for depth filters
         """
         self.enable_rgb = enable_rgb
         self.enable_depth = enable_depth
@@ -56,6 +61,51 @@ class D455Camera:
         self.device_id = device_id
         self.output_dir = output_dir
         self.video_dir = os.path.join('realsense', 'videos')
+        self.enable_filters = enable_filters
+        
+        # Default filter configuration
+        self.default_filter_config = {
+            'decimation': {
+                'enable': True,
+                'magnitude': 2  # Decimation factor (1=no effect, 2=half res, etc.)
+            },
+            'spatial': {
+                'enable': True,
+                'magnitude': 2,  # Filter magnitude (1-5)
+                'smooth_alpha': 0.5,  # Alpha value for smoothing (0-1)
+                'smooth_delta': 20,  # Delta value for edge preservation
+                'hole_fill': 1  # Hole filling mode (0-5)
+            },
+            'temporal': {
+                'enable': True,
+                'smooth_alpha': 0.4,  # Alpha value for smoothing
+                'smooth_delta': 20,  # Delta value for edge preservation
+                'persistence_control': 3  # Persistence (0-8)
+            },
+            'hole_filling': {
+                'enable': True,
+                'mode': 1  # Hole filling mode (0-2)
+            },
+            'threshold': {
+                'enable': False,
+                'min_dist': 0.1,  # Minimum distance in meters
+                'max_dist': 4.0  # Maximum distance in meters
+            },
+            'disparity': {
+                'enable': True
+            }
+        }
+        
+        # Apply user-provided filter config on top of defaults
+        # TODO: let xingfang review this
+        if self.enable_filters:
+            self.filter_config = self.default_filter_config.copy()
+        
+        if filter_config:
+                # Update config with provided settings
+            for filter_name, settings in filter_config.items():
+                if filter_name in self.filter_config:
+                    self.filter_config[filter_name].update(settings)
         
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(self.video_dir, exist_ok=True)
@@ -69,6 +119,9 @@ class D455Camera:
         self.is_recording = False
         self.recording_thread = None
         self.frame_count = 0
+        
+        # Initialize filters
+        self.filters = {}
         
         # Calibration data
         self.T_base_camera = np.eye(4)  
@@ -125,6 +178,66 @@ class D455Camera:
             
         if self.align_frames and self.enable_rgb and self.enable_depth:
             self.align = rs.align(rs.stream.color)
+            
+        # Initialize post-processing filters
+        if self.enable_filters and self.enable_depth:
+            self._initialize_filters()
+    # TODO double check with doc later
+    def _initialize_filters(self):
+        """Initialize RealSense post-processing filters"""
+        # Decimation filter (reduces resolution)
+        if self.filter_config['decimation']['enable']:
+            decimate = rs.decimation_filter()
+            decimate.set_option(rs.option.filter_magnitude, 
+                                self.filter_config['decimation']['magnitude'])
+            self.filters['decimation'] = decimate
+        
+        # Spatial filter (smooths and fills small holes)
+        if self.filter_config['spatial']['enable']:
+            spatial = rs.spatial_filter()
+            spatial.set_option(rs.option.filter_magnitude, 
+                              self.filter_config['spatial']['magnitude'])
+            spatial.set_option(rs.option.filter_smooth_alpha, 
+                              self.filter_config['spatial']['smooth_alpha'])
+            spatial.set_option(rs.option.filter_smooth_delta, 
+                              self.filter_config['spatial']['smooth_delta'])
+            spatial.set_option(rs.option.holes_fill, 
+                              self.filter_config['spatial']['hole_fill'])
+            self.filters['spatial'] = spatial
+        
+        # Temporal filter (reduces temporal noise)
+        if self.filter_config['temporal']['enable']:
+            temporal = rs.temporal_filter()
+            temporal.set_option(rs.option.filter_smooth_alpha, 
+                               self.filter_config['temporal']['smooth_alpha'])
+            temporal.set_option(rs.option.filter_smooth_delta, 
+                               self.filter_config['temporal']['smooth_delta'])
+            temporal.set_option(rs.option.holes_fill, 
+                               self.filter_config['temporal']['persistence_control'])
+            self.filters['temporal'] = temporal
+        
+        # Hole filling filter
+        if self.filter_config['hole_filling']['enable']:
+            hole_filling = rs.hole_filling_filter()
+            hole_filling.set_option(rs.option.holes_fill, 
+                                   self.filter_config['hole_filling']['mode'])
+            self.filters['hole_filling'] = hole_filling
+        
+        # Threshold filter (removes points outside distance range)
+        if self.filter_config['threshold']['enable']:
+            threshold = rs.threshold_filter()
+            threshold.set_option(rs.option.min_distance, 
+                                self.filter_config['threshold']['min_dist'])
+            threshold.set_option(rs.option.max_distance, 
+                                self.filter_config['threshold']['max_dist'])
+            self.filters['threshold'] = threshold
+        
+        # Disparity transform (better preserves edges)
+        if self.filter_config['disparity']['enable']:
+            self.filters['disparity_to_depth'] = rs.disparity_transform(False)
+            self.filters['depth_to_disparity'] = rs.disparity_transform(True)
+            
+        print(f"Initialized {len(self.filters)} depth post-processing filters")
     
     def start(self):
         if not self.is_running:
@@ -162,9 +275,46 @@ class D455Camera:
             print("Camera is not running")
             return False
     
+    def _apply_filters(self, depth_frame):
+        """Apply post-processing filters to depth frame"""
+        if not self.enable_filters or not self.filters:
+            return depth_frame
+        
+        filtered_frame = depth_frame
+        
+        # Convert to disparity for better filtering (if enabled)
+        if 'depth_to_disparity' in self.filters:
+            filtered_frame = self.filters['depth_to_disparity'].process(filtered_frame)
+        
+        # Decimate (reduce resolution, smooth)
+        if 'decimation' in self.filters:
+            filtered_frame = self.filters['decimation'].process(filtered_frame)
+        
+        # Apply threshold filter to remove distant points
+        if 'threshold' in self.filters:
+            filtered_frame = self.filters['threshold'].process(filtered_frame)
+        
+        # Apply spatial filter (edge-preserving)
+        if 'spatial' in self.filters:
+            filtered_frame = self.filters['spatial'].process(filtered_frame)
+        
+        # Apply temporal filter (smooth over time)
+        if 'temporal' in self.filters:
+            filtered_frame = self.filters['temporal'].process(filtered_frame)
+        
+        # Convert back from disparity to depth (if needed)
+        if 'disparity_to_depth' in self.filters:
+            filtered_frame = self.filters['disparity_to_depth'].process(filtered_frame)
+        
+        # Apply hole filling after filters
+        if 'hole_filling' in self.filters:
+            filtered_frame = self.filters['hole_filling'].process(filtered_frame)
+        
+        return filtered_frame
+    
     def get_frames(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """
-        Get the current RGB and depth frames.
+        Get the current RGB and depth frames with optional post-processing.
         
         Returns:
             Tuple containing (rgb_frame, depth_frame) as numpy arrays
@@ -189,9 +339,16 @@ class D455Camera:
             
             if self.enable_depth:
                 depth_frame_raw = frames.get_depth_frame()
+                
                 if depth_frame_raw:
-                    depth_frame_raw.keep() # important if you are storing depth_frame in a list later.
-                    depth_frame = np.asanyarray(depth_frame_raw.get_data())
+                    # Apply post-processing filters if enabled
+                    if self.enable_filters and self.filters:
+                        depth_frame_filtered = self._apply_filters(depth_frame_raw)
+                        depth_frame_filtered.keep()  # important for memory management
+                        depth_frame = np.asanyarray(depth_frame_filtered.get_data())
+                    else:
+                        depth_frame_raw.keep()  # important if you are storing depth_frame in a list later.
+                        depth_frame = np.asanyarray(depth_frame_raw.get_data())
             
             return rgb_frame, depth_frame
         
@@ -506,7 +663,7 @@ class D455Camera:
         
         return depth_value    # Convert to meters
     
-    def get_3d_point(self, x: int, y: int, depth_frame: np.ndarray) -> np.ndarray:
+    def get_3d_point(self, x: int, y: int, depth_frame: np.ndarray, thickness: float = 0) -> np.ndarray:
         if not (self.is_running and self.enable_depth):
             print("Camera is not running or depth is not enabled")
             return None
@@ -522,7 +679,7 @@ class D455Camera:
             print(f"Point ({x}, {y}) is outside of depth frame bounds ({width}x{height})")
             return None
         
-        depth_value = depth_frame[y, x]
+        depth_value = depth_frame[y, x] + thickness # NOTE: this is a hack to get the depth value of the pixel of the candy
         
         if depth_value == 0:
             return None  # Invalid depth
@@ -537,7 +694,7 @@ class D455Camera:
         # Convert to meters
         return np.array(point) / 1000.0
     
-    def get_3d_point_robot_base(self, x: int, y: int, depth_frame: np.ndarray) -> np.ndarray:
+    def get_3d_point_robot_base(self, x: int, y: int, depth_frame: np.ndarray, thickness: float = 0) -> np.ndarray:
         """
         Get 3D point at pixel coordinate in robot base frame.
         
@@ -549,7 +706,7 @@ class D455Camera:
             3D point in robot base coordinate system [x, y, z] in meters
         """
         # Get point in camera coordinates
-        point_camera = self.get_3d_point(x, y, depth_frame)
+        point_camera = self.get_3d_point(x, y, depth_frame, thickness)
         
         if point_camera is None:
             return None
@@ -591,6 +748,167 @@ class D455Camera:
         except Exception as e:
             print(f"Error loading calibration matrix: {e}")
             return False
+    
+    def update_filter_parameter(self, filter_name: str, option_name: str, value: float) -> bool:
+        """
+        Update a parameter for a specific filter at runtime.
+        
+        Args:
+            filter_name: Name of the filter ('spatial', 'temporal', etc.)
+            option_name: Name of the option to update
+            value: New value for the option
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.enable_filters or not self.filters:
+            print("Filters are not enabled")
+            return False
+            
+        if filter_name not in self.filters:
+            print(f"Filter '{filter_name}' not found")
+            return False
+            
+        try:
+            # Map from our config names to RealSense option names
+            option_mapping = {
+                'magnitude': rs.option.filter_magnitude,
+                'smooth_alpha': rs.option.filter_smooth_alpha,
+                'smooth_delta': rs.option.filter_smooth_delta,
+                'hole_fill': rs.option.holes_fill,
+                'min_dist': rs.option.min_distance,
+                'max_dist': rs.option.max_distance
+            }
+            
+            # Map the user-friendly name to RealSense option
+            if option_name not in option_mapping:
+                print(f"Option '{option_name}' not recognized")
+                return False
+                
+            rs_option = option_mapping[option_name]
+            
+            # Update the filter
+            self.filters[filter_name].set_option(rs_option, value)
+            
+            # Also update our config dict for consistency
+            if filter_name in self.filter_config and option_name in self.filter_config[filter_name]:
+                self.filter_config[filter_name][option_name] = value
+                
+            print(f"Updated {filter_name}.{option_name} to {value}")
+            return True
+            
+        except Exception as e:
+            print(f"Error updating filter parameter: {e}")
+            return False
+    
+    def save_filter_config(self, file_path: Optional[str] = None) -> bool:
+        """
+        Save the current filter configuration to a JSON file.
+        
+        Args:
+            file_path: Path to save the configuration (None for default path)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if file_path is None:
+            file_path = os.path.join(self.output_dir, 'filter_config.json')
+            
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(self.filter_config, f, indent=4)
+            print(f"Saved filter configuration to {file_path}")
+            return True
+        except Exception as e:
+            print(f"Error saving filter configuration: {e}")
+            return False
+    
+    def load_filter_config(self, file_path: Optional[str] = None) -> bool:
+        """
+        Load filter configuration from a JSON file and reinitialize filters.
+        
+        Args:
+            file_path: Path to the configuration file (None for default path)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if file_path is None:
+            file_path = os.path.join(self.output_dir, 'filter_config.json')
+            
+        if not os.path.exists(file_path):
+            print(f"Filter configuration file not found: {file_path}")
+            return False
+            
+        try:
+            with open(file_path, 'r') as f:
+                new_config = json.load(f)
+                
+            # Update config
+            for filter_name, settings in new_config.items():
+                if filter_name in self.filter_config:
+                    self.filter_config[filter_name].update(settings)
+            
+            # Reinitialize filters with new config
+            self.filters = {}
+            self._initialize_filters()
+            
+            print(f"Loaded filter configuration from {file_path}")
+            return True
+        except Exception as e:
+            print(f"Error loading filter configuration: {e}")
+            return False
+    
+    def get_filter_info(self) -> Dict:
+        """
+        Get information about current filter settings.
+        
+        Returns:
+            Dictionary with filter information
+        """
+        info = {
+            'enabled': self.enable_filters,
+            'filters': {}
+        }
+        
+        if not self.enable_filters:
+            return info
+            
+        for filter_name, filter_obj in self.filters.items():
+            # Skip disparity transforms as they don't have configurable options
+            if filter_name in ['depth_to_disparity', 'disparity_to_depth']:
+                continue
+                
+            filter_info = {}
+            
+            # Try to get standard options for each filter
+            try:
+                if hasattr(rs.option, 'filter_magnitude'):
+                    filter_info['magnitude'] = filter_obj.get_option(rs.option.filter_magnitude)
+            except:
+                pass
+                
+            try:
+                if hasattr(rs.option, 'filter_smooth_alpha'):
+                    filter_info['smooth_alpha'] = filter_obj.get_option(rs.option.filter_smooth_alpha)
+            except:
+                pass
+                
+            try:
+                if hasattr(rs.option, 'filter_smooth_delta'):
+                    filter_info['smooth_delta'] = filter_obj.get_option(rs.option.filter_smooth_delta)
+            except:
+                pass
+                
+            try:
+                if hasattr(rs.option, 'holes_fill'):
+                    filter_info['hole_fill'] = filter_obj.get_option(rs.option.holes_fill)
+            except:
+                pass
+                
+            info['filters'][filter_name] = filter_info
+            
+        return info
     
     def calibrate_with_points(self, points_camera: List[np.ndarray], points_robot: List[np.ndarray]):
         """
@@ -703,7 +1021,9 @@ def test_camera():
             rgb_resolution=(848, 480),
             depth_resolution=(848, 480),
             fps=30,
-            align_frames=True
+            align_frames=True,
+            enable_filters=False,
+            filter_config=None
         )
         
         # Start camera
@@ -878,7 +1198,217 @@ def test_camera_under_latency():
         cv2.destroyAllWindows()
         print("Latency test completed.")
 
+def tune_filters():
+    """
+    Interactive utility to tune depth filters for optimal performance.
+    
+    This tool allows users to:
+    1. See real-time comparison between filtered and unfiltered depth
+    2. Adjust filter parameters with live feedback
+    3. Save optimized filter configuration
+    """
+    print("\n=== RealSense D455 Filter Tuning Utility ===")
+    
+    try:
+        # Create camera with default filter settings
+        camera = D455Camera(
+            enable_rgb=True,
+            enable_depth=True,
+            rgb_resolution=(848, 480),
+            depth_resolution=(848, 480),
+            fps=30,
+            align_frames=True,
+            enable_filters=True
+        )
+        
+        # Start camera
+        if not camera.start():
+            print("Failed to start camera")
+            return
+            
+        print("\nFilter Tuning Instructions:")
+        print("  Press 'T' to toggle filters on/off")
+        print("  Press '1-5' to select active filter:")
+        print("    1 - Decimation")
+        print("    2 - Spatial")
+        print("    3 - Temporal")
+        print("    4 - Hole Filling")
+        print("    5 - Threshold")
+        print("  Press 'UP/DOWN' to increase/decrease parameter value")
+        print("  Press 'LEFT/RIGHT' to select parameter")
+        print("  Press 'S' to save current configuration")
+        print("  Press 'L' to load saved configuration")
+        print("  Press 'ESC' to exit")
+        
+        cv2.namedWindow("Filter Tuning", cv2.WINDOW_AUTOSIZE)
+        
+        # State variables
+        active_filter = 'spatial'
+        active_param = 'magnitude'
+        filters_enabled = True
+        
+        # Parameter maps for each filter type
+        parameters = {
+            'decimation': ['magnitude'],
+            'spatial': ['magnitude', 'smooth_alpha', 'smooth_delta', 'hole_fill'],
+            'temporal': ['smooth_alpha', 'smooth_delta', 'persistence_control'],
+            'hole_filling': ['mode'],
+            'threshold': ['min_dist', 'max_dist']
+        }
+        
+        # Step sizes for each parameter
+        step_sizes = {
+            'magnitude': 1.0,
+            'smooth_alpha': 0.05,
+            'smooth_delta': 1.0,
+            'hole_fill': 1.0,
+            'mode': 1.0,
+            'min_dist': 0.1,
+            'max_dist': 0.1,
+            'persistence_control': 1.0
+        }
+        
+        # Main loop
+        while True:
+            # Get frames
+            rgb_frame, depth_frame = camera.get_frames()
+            
+            if rgb_frame is None or depth_frame is None:
+                print("Failed to get frames")
+                time.sleep(0.1)
+                continue
+            
+            # Get unfiltered frame for comparison
+            camera.enable_filters = False
+            _, unfiltered_depth = camera.get_frames()
+            camera.enable_filters = filters_enabled
+            
+            # Create visualizations
+            depth_color = cv2.applyColorMap(
+                cv2.convertScaleAbs(depth_frame, alpha=0.03),
+                cv2.COLORMAP_JET
+            )
+            
+            unfiltered_color = cv2.applyColorMap(
+                cv2.convertScaleAbs(unfiltered_depth, alpha=0.03),
+                cv2.COLORMAP_JET
+            )
+            
+            # Calculate hole percentages
+            filtered_holes = np.sum(depth_frame == 0) / depth_frame.size * 100
+            unfiltered_holes = np.sum(unfiltered_depth == 0) / unfiltered_depth.size * 100
+            
+            # Draw filter status
+            cv2.putText(depth_color, 
+                       f"Filtered (holes: {filtered_holes:.1f}%)", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            cv2.putText(unfiltered_color, 
+                       f"Unfiltered (holes: {unfiltered_holes:.1f}%)", 
+                       (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # Add filter info
+            y_pos = 70
+            cv2.putText(depth_color, 
+                       f"Active filter: {active_filter} | Parameter: {active_param}", 
+                       (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            
+            # Display current filter settings
+            if active_filter in camera.filter_config:
+                for param, value in camera.filter_config[active_filter].items():
+                    y_pos += 30
+                    highlight = param == active_param
+                    color = (0, 255, 255) if highlight else (255, 255, 255)
+                    cv2.putText(depth_color, 
+                               f"{param}: {value}", 
+                               (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2 if highlight else 1)
+            
+            # Combine images
+            comparison = np.hstack((depth_color, unfiltered_color))
+            
+            # Show image
+            cv2.imshow("Filter Tuning", comparison)
+            
+            # Handle key events
+            key = cv2.waitKey(1)
+            
+            if key == 27:  # ESC
+                break
+            elif key == ord('t'):
+                # Toggle filters
+                filters_enabled = not filters_enabled
+                camera.enable_filters = filters_enabled
+                print(f"Filters {'enabled' if filters_enabled else 'disabled'}")
+            elif key == ord('s'):
+                # Save configuration
+                camera.save_filter_config()
+            elif key == ord('l'):
+                # Load configuration
+                camera.load_filter_config()
+            elif key == ord('1'):
+                active_filter = 'decimation'
+                active_param = parameters[active_filter][0]
+                print(f"Selected filter: {active_filter}")
+            elif key == ord('2'):
+                active_filter = 'spatial'
+                active_param = parameters[active_filter][0]
+                print(f"Selected filter: {active_filter}")
+            elif key == ord('3'):
+                active_filter = 'temporal'
+                active_param = parameters[active_filter][0]
+                print(f"Selected filter: {active_filter}")
+            elif key == ord('4'):
+                active_filter = 'hole_filling'
+                active_param = parameters[active_filter][0]
+                print(f"Selected filter: {active_filter}")
+            elif key == ord('5'):
+                active_filter = 'threshold'
+                active_param = parameters[active_filter][0]
+                print(f"Selected filter: {active_filter}")
+            elif key == 82:  # Up arrow
+                # Increase parameter value
+                if active_filter in camera.filter_config and active_param in camera.filter_config[active_filter]:
+                    current_value = camera.filter_config[active_filter][active_param]
+                    step = step_sizes.get(active_param, 1.0)
+                    new_value = current_value + step
+                    camera.update_filter_parameter(active_filter, active_param, new_value)
+            elif key == 84:  # Down arrow
+                # Decrease parameter value
+                if active_filter in camera.filter_config and active_param in camera.filter_config[active_filter]:
+                    current_value = camera.filter_config[active_filter][active_param]
+                    step = step_sizes.get(active_param, 1.0)
+                    new_value = max(0, current_value - step)  # Prevent negative values
+                    camera.update_filter_parameter(active_filter, active_param, new_value)
+            elif key == 81:  # Left arrow
+                # Previous parameter
+                if active_filter in parameters:
+                    param_list = parameters[active_filter]
+                    current_idx = param_list.index(active_param) if active_param in param_list else 0
+                    new_idx = (current_idx - 1) % len(param_list)
+                    active_param = param_list[new_idx]
+                    print(f"Selected parameter: {active_param}")
+            elif key == 83:  # Right arrow
+                # Next parameter
+                if active_filter in parameters:
+                    param_list = parameters[active_filter]
+                    current_idx = param_list.index(active_param) if active_param in param_list else 0
+                    new_idx = (current_idx + 1) % len(param_list)
+                    active_param = param_list[new_idx]
+                    print(f"Selected parameter: {active_param}")
+            
+    except Exception as e:
+        print(f"Error in filter tuning: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    finally:
+        if 'camera' in locals():
+            camera.stop()
+        cv2.destroyAllWindows()
+        print("Filter tuning completed")
+
 
 if __name__ == "__main__":
-    # test_camera()
-    test_camera_under_latency()
+    test_camera()
+    # test_camera_under_latency()
+    # tune_filters()
