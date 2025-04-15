@@ -212,8 +212,8 @@ class LiftCubeStateRealEnv(Env):
         self.joint_names = [f"joint_{i}" for i in range(1, 7)]
 
         # workspace bounds for the ee 
-        self.ee_min = np.array([-0.15, -0.1, 0.012]) # z-axis should be lower, like 0.010 (likely not impacting the data)
-        self.ee_max = np.array([-0.07, 0.1, 0.1])
+        self.ee_min = np.array([-0.15, -0.1, 0.008]) # z-axis should be lower, like 0.010 (likely not impacting the data)
+        self.ee_max = np.array([-0.06, 0.1, 0.1])
 
     def diffik_nullspace(
         self,
@@ -461,7 +461,8 @@ class LiftCubeStateRealEnv(Env):
             rgb_resolution=(848, 480),
             depth_resolution=(848, 480),
             fps=30,
-            align_frames=True
+            align_frames=True,
+            enable_filters=True
         )
         
         if self.T_base_camera is not None:
@@ -543,24 +544,7 @@ class LiftCubeStateRealEnv(Env):
         self.target = None
         observation = {}
         observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
-        if self.use_camera:
-            # Get camera frames
-            # rgb_frame, depth_frame = self.camera.get_frames()
-            # if rgb_frame is None or depth_frame is None:
-            #     raise RuntimeError("Failed to get camera frames during reset")
-            self.move_robot_to_pre_camera_position()
-            if self.use_auto_target:
-                input("Using auto target. Press Enter to continue...")
-                observation = self.get_camera_observations(observation)
-                observation['target_eepos'] = observation['estimated_target_pos']
-                self.target = observation['target_eepos']
-                print(f"Auto target: {self.target}")
-            else:
-                time.sleep(1)
-                self.target = self.get_target_from_user()
-                print(f"Target: {self.target}")
-                observation = self.get_camera_observations(observation)
-                observation['target_eepos'] = self.target
+        
 
         # Reset the robot to the initial position and sample the cube position
         cube_pos = self.np_random.uniform(self.cube_low, self.cube_high)
@@ -635,6 +619,25 @@ class LiftCubeStateRealEnv(Env):
         observation["log_is_success"] = np.zeros((1,), dtype=np.float32)
         observation['gripper_blocked'] = np.zeros((1,), dtype=np.float32)
         observation.update(robot_observation)
+        if self.use_camera:
+            # Get camera frames
+            # rgb_frame, depth_frame = self.camera.get_frames()
+            # if rgb_frame is None or depth_frame is None:
+            #     raise RuntimeError("Failed to get camera frames during reset")
+            # self.move_robot_to_pre_camera_position()
+            if self.use_auto_target:
+                input("Using auto target. Press Enter to continue...")
+                observation = self.get_camera_observations(observation)
+                observation['target_eepos'] = observation['estimated_target_pos']
+                self.target = observation['target_eepos']
+                print(f"Auto target: {self.target}")
+            else:
+                time.sleep(1)
+                self.target = self.get_target_from_user()
+                print(f"Target: {self.target}")
+                observation = self.get_camera_observations(observation)
+                observation['target_eepos'] = self.target
+ 
         info = {
             'qpos': qpos,
             'real_qpos': real_qpos,
@@ -655,11 +658,22 @@ class LiftCubeStateRealEnv(Env):
         expected_gripper_pos = gripper_before_action + gripper_displacement
         # clip the expected gripper pos to the limits
         expected_gripper_pos = np.clip(expected_gripper_pos, self.qpos_min[-1], self.qpos_max[-1])
-        gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.05
+        gripper_blocked = np.abs(gripper_after_action - expected_gripper_pos) > 0.02
         observation['gripper_blocked'] = np.array([float(gripper_blocked)], dtype=np.float32)
+        reward = 0.0
         if self.use_camera:
             observation['target_eepos'] = self.target
             observation = self.get_camera_observations(observation)
+            goal_point = observation['estimated_target_pos'] + np.array([0.01, 0, 0])
+            # add reward for proximity to target and gripper blocked
+            # 0 to 0.1. 
+            dist_obj_robot = np.linalg.norm(observation['ee_pos'][:3] - goal_point[:3])
+            # now print out dx dy dz to debug
+            print(f"dx: {observation['ee_pos'][0] - goal_point[0]}, dy: {observation['ee_pos'][1] - goal_point[1]}, dz: {observation['ee_pos'][2] - goal_point[2]}")
+            # print(f"dist_obj_robot: {dist_obj_robot}")
+            dist_rew_term = np.clip(dist_obj_robot, 0, 0.1) * -2
+            gripper_block_term = observation['gripper_blocked'] * 2.0
+            reward += dist_rew_term + gripper_block_term
 
         # print('gripper before action', gripper_before_action)
         # print('gripper displacement', gripper_displacement)
@@ -668,17 +682,20 @@ class LiftCubeStateRealEnv(Env):
         # print('gripper blocked', gripper_blocked)
 
         # print(f"gripper blocked: {gripper_blocked}, ee_pos: {observation['ee_pos']}")
-        success = gripper_blocked and observation['ee_pos'][2] >= 0.07
+        success = gripper_blocked and observation['ee_pos'][2] >= 0.05
         observation["log_is_success"] = np.array([float(success)], dtype=np.float32) 
-        reward = float(success) 
+        reward += float(success) * 100
+        reward = reward.item()
         terminated = success
         truncated = False
-        info = {}
-
+        info = {
+            'dist_rew_term': dist_rew_term,
+            'gripper_block_term': gripper_block_term,
+        }
+        print(f"reward: {reward}, dist:{dist_obj_robot:.2f}, rew_dist: {dist_rew_term:.2f}, rew_block: {gripper_block_term}")
         info["qpos"] = self.data.qpos.copy()
         info["qvel"] = self.data.qvel.copy()
         info.update(action_info)
-
         return observation, reward, terminated, truncated, info
 
 

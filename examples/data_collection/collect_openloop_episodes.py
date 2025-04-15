@@ -88,7 +88,7 @@ def prepare_frame_data(
     frame_data = {
         "task": task_name,
         "action": action,
-        "reward": np.array([reward], dtype=np.float32),
+        "reward": np.array([reward], dtype=np.float32).reshape(-1), # NOTE: didn't reshape before
         "done": np.array([done], dtype=bool),
         "terminated": np.array([terminated], dtype=bool),
         "observation.arm_qpos": obs["arm_qpos"],
@@ -127,7 +127,7 @@ def collect_episodes(
         print(f"Collecting episode {ep_idx+1}/{num_episodes}")
         # reset the noise if running scripted policy
         if isinstance(policy, ScriptedLiftPolicy):
-            policy.reset_noise()
+            policy.episode_reset()    
         obs, _ = env.reset()
         done = False
         frame_idx = 0
@@ -417,21 +417,23 @@ class ScriptedLiftPolicy:
         # Control parameters
         self.x_error = 0.008
         self.y_error = 0.004
-        # self.x_offset = 0.01
         self.x_offset_noisy = 0.0
-        self.reset_noise()
+        self.episode_reset()
         self.z_limit = 0.038
         self.z_offset = 0.01
         self.z_step = 0.01
-        self.z_desc_limit = 0.01
-        self.z_desc_error = -0.003
+        self.z_desc_limit = 0.008
+        self.z_desc_error = -0.005
         self.g_grasp = 0.9
         self.g_close = 0.1
         self.target = None
-        self.noise_updated = True
+        self.phase = 'reaching'
 
-    def reset_noise(self):
-        self.x_offset_noisy = np.clip(np.random.normal(0, 0.03), -0.02, 0.03)
+    def episode_reset(self):
+        # self.x_offset_noisy = np.clip(np.random.normal(0, 0.02), -0.01, 0.01)
+        self.phase = 'reaching'
+        self.x_offset_noisy = 0.0
+        print("Using 0 noise for debug.")
         print(f"x_offset_noisy::::::::::::: {self.x_offset_noisy}")
 
     def __call__(self, obs: Observation) -> Tuple[Action, bool]:
@@ -448,38 +450,39 @@ class ScriptedLiftPolicy:
         blocked = obs["gripper_blocked"]
         ee_pos = obs['ee_pos']
         target = self.target.copy()  # Use the camera-set target
-        # target[0] += self.x_offset
         target[0] += self.x_offset_noisy
+        # target[:2] += np.random.uniform(-0.005, 0.005, size=2)
 
         x, y, z, g = ee_pos[0], ee_pos[1], ee_pos[2], ee_pos[3]
         dx, dy, dz = target - ee_pos[:3]
         
         action = np.zeros(4, dtype=np.float32)
        
-        if (abs(dx) <= self.x_error and abs(dy) <= self.y_error) or blocked:
+        if self.phase == 'grasping' or blocked:
             if self.z_desc_limit - z < self.z_desc_error and not blocked:
                 # Above target - approaching
                 action[3] = max(0, self.g_grasp - g)
                 action[2] = min(0, np.sign(self.z_desc_limit - z) * self.z_step)
-                # add a small random noise in x direction
-                action[0] += np.random.uniform(-0.003, 0.005)
             else:
                 # At target - gripping or lifting
                 if blocked:
                     # Lifting
                     action[3] = min(0, self.g_close - g)
                     action[2] = 3 * self.z_step
+                    coin_flip = np.random.binomial(1, 0.2)
+                    if coin_flip == 1:
+                        action[3] += 0.3
+                        print("!!! Gripper noise added")
                 elif self.g_close-g > -0.03:
                     action = np.array([0, 0, 0.05, 0], dtype=np.float32)
-                    # add a small random noise to the xy of the action 
-                    action[:2] += np.random.uniform(-0.005, 0.005, size=2)
-                    action[2] += 0.01
                     print("!!! gripping failed. Resetting position and noise")
-                    self.reset_noise()
+                    self.episode_reset()
                 else:
                     # Gripping
                     action[3] = min(0, self.g_close - g)
                     print(action)
+            action[:2] += np.random.uniform(-0.012, 0.012, size=2) # added noise in xy plane for randomization
+            
         else:
             # Moving to target xy position
             if abs(dx) > self.x_error:
@@ -488,6 +491,8 @@ class ScriptedLiftPolicy:
                 action[1] = dy
             if z < self.z_limit:
                 action[2] = self.z_offset
+            if abs(dx) <= self.x_error and abs(dy) <= self.y_error:
+                self.phase = 'grasping'
 
         # Scale the action before returning it
         scaled_action = self.env.unwrapped.get_scaled_action(action)

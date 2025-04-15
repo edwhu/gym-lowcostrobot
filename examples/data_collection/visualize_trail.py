@@ -42,7 +42,7 @@ def visualize_estimated_target_pos(dataset: LeRobotDataset) -> None:
             ax.set_title('Estimated Target Positions')
         
             # Instead of plt.show(), save the figure to a file in the estimated_target_pos_img folder. If it doesn't exist, create it.
-            folder_name = 'estimated_target_pos_img_refactor_getobs'
+            folder_name = 'estimated_target_pos_img_v1.2'
             if not os.path.exists(folder_name):
                 os.makedirs(folder_name)
             plt.savefig(f'{folder_name}/episode_{episode_count}_trajectory.png')
@@ -57,7 +57,7 @@ def visualize_estimated_target_pos(dataset: LeRobotDataset) -> None:
             plt.close('all')  # Use close('all') instead of just close()
 
 if __name__ == "__main__":
-    dataset_path = Path("./data/koch_robot_dataset_scripted_test_refactor_getobs")
-    dataset = LeRobotDataset(repo_id="edwhu/koch_robot_dataset_scripted_v1.1", root=dataset_path)
+    dataset_path = Path("./data/koch_robot_dataset_scripted_v1.2")
+    dataset = LeRobotDataset(repo_id="edwhu/koch_robot_dataset_scripted_v1.2", root=dataset_path)
     visualize_estimated_target_pos(dataset)
 

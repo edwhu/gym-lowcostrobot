@@ -32,7 +32,8 @@ class RealtimeCalibrator(SimpleCalibrator):
             rgb_resolution=(848, 480),
             depth_resolution=(848, 480),
             fps=30,
-            align_frames=True
+            align_frames=True,
+            enable_filters=True
         )
         
         # Known transformation from robot base to ArUco marker
@@ -42,7 +43,7 @@ class RealtimeCalibrator(SimpleCalibrator):
         
         self.T_base_marker = np.array([
             [1, 0, 0, -0.067],  # x translation from  
-            [0, 1, 0, 0.101],  # y translation from  
+            [0, 1, 0, 0.13],  # y translation from  
             [0, 0, 1, 0.0],   # z translation from  
             [0, 0, 0, 1]
         ])
@@ -126,7 +127,7 @@ class RealtimeCalibrator(SimpleCalibrator):
         
         return vis_image
         
-    def run(self, marker_size=0.02):
+    def run(self, marker_size=0.05):
         if not self.start():
             return
             

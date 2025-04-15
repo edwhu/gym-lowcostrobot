@@ -47,27 +47,31 @@ def main():
     print(f"Loaded calibration matrix:\n{T_base_camera}")
     
     # Initialize camera
-    camera = D455Camera(
-        enable_rgb=True,
-        enable_depth=True,
-        rgb_resolution=(848, 480),
-        depth_resolution=(848, 480),
-        fps=30,
-        align_frames=True
-    )
+    # camera = D455Camera(
+    #     enable_rgb=True,
+    #     enable_depth=True,
+    #     rgb_resolution=(848, 480),
+    #     depth_resolution=(848, 480),
+    #     fps=30,
+    #     align_frames=True
+    # )
     
-    camera.set_calibration_matrix(T_base_camera)
+    # camera.set_calibration_matrix(T_base_camera)
     
-    if not camera.start():
-        print("Failed to start camera")
-        return
+    # if not camera.start():
+    #     print("Failed to start camera")
+    #     return
     
     env = LiftCubeStateRealEnv(
         observation_mode="both",
         render_mode="human", 
         action_mode="nullspace", 
+        use_camera=True,
+        use_auto_target=True
     )
     
+    camera = env.camera
+
     obs, info = env.reset()
     print(f"Initial end-effector position: {obs['ee_pos'][:3]}")
     env.render()
