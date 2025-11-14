@@ -13,6 +13,7 @@ from tqdm import trange, tqdm
 import uuid
 
 from lerobot.common.robot_devices.motors.dynamixel import DynamixelMotorsBus
+from lerobot.common.robot_devices.motors.configs import DynamixelMotorsBusConfig
 from low_cost_robot.robot import Robot
 from low_cost_robot.dynamixel import Dynamixel
 
@@ -39,7 +40,7 @@ def do_sim(args):
     axis_direction = [-1, -1, -1, 1, -1, -1]
     joint_commands = [0,0,0,0,0,0]
     leader_arm = DynamixelMotorsBus(
-        port=args.device,
+        device_name=args.device,
         motors={
             # name: (index, model)
             "shoulder_pan": (1, "xl330-m077"),
@@ -115,8 +116,20 @@ def collect_demos(args):
     counts_to_radians = np.pi * 2. / 4096.
     start_pos = [2072, 2020, 1063, 3966, 3053, 1938] # get the start pos from .cache/calibration directory in your local lerobot
     axis_direction = [-1, -1, -1, 1, -1, -1]
-    leader_arm = DynamixelMotorsBus(
-        port=args.device,
+    # leader_arm = DynamixelMotorsBus(
+    #     device_name=args.device,
+    #     motors={
+    #         # name: (index, model)
+    #         "shoulder_pan": (1, "xl330-m077"),
+    #         "shoulder_lift": (2, "xl330-m077"),
+    #         "elbow_flex": (3, "xl330-m077"),
+    #         "wrist_flex": (4, "xl330-m077"),
+    #         "wrist_roll": (5, "xl330-m077"),
+    #         "gripper": (6, "xl330-m077"),
+    #     },
+    # )
+    leader_arm_config = DynamixelMotorsBusConfig(
+        port=args.device,     # was 'device_name'
         motors={
             # name: (index, model)
             "shoulder_pan": (1, "xl330-m077"),
@@ -126,8 +139,10 @@ def collect_demos(args):
             "wrist_roll": (5, "xl330-m077"),
             "gripper": (6, "xl330-m077"),
         },
+        mock=False,           # or True if you want to run without hardware
     )
 
+    leader_arm = DynamixelMotorsBus(leader_arm_config)
     if not leader_arm.is_connected:
         leader_arm.connect()
 
@@ -287,7 +302,7 @@ def render_sim(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Choose between 5dof and 6dof lowcost robot simulation.")
     parser.add_argument('--device', type=str, default='/dev/ttyACM0', help='Port name (e.g., COM1, /dev/ttyUSB0, /dev/tty.usbserial-*)')
-    parser.add_argument('--env-name', type=str, default='LiftCubeCamera-v0', help='Specify the gym-lowcost robot env to test.')
+    parser.add_argument('--env-name', type=str, default='LiftCube-v0', help='Specify the gym-lowcost robot env to test.')
     parser.add_argument('--demo_folder', type=str, default='demos', help='Specify the local folder to save demos to')
     args = parser.parse_args()
 

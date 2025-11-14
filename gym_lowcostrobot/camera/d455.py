@@ -3,6 +3,8 @@ warnings.filterwarnings('ignore', category=UserWarning, module='gymnasium.envs.r
 
 import numpy as np
 import cv2
+# Check what cv2 actually is
+# print(f"cv2 is: {cv2.__file__}")
 import pyrealsense2 as rs
 import time
 import os

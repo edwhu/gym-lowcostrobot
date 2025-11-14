@@ -79,7 +79,7 @@ def register_robotics_envs():
         id="LiftCubeStateReal-v0",
         entry_point="gym_lowcostrobot.envs:LiftCubeStateRealEnv",
         max_episode_steps=30,
-        kwargs={"observation_mode":"state", "action_mode":"nullspace", "render_mode":"rgb_array", "use_camera":True, "use_auto_target":True},
+        kwargs={"observation_mode":"state", "action_mode":"nullspace", "render_mode":"rgb_array", "use_camera":True, "use_auto_target":True},# auto-target used to be True. False is temporary.
         disable_env_checker=True,
     )
     register(

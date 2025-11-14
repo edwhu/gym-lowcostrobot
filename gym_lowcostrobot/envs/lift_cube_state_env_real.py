@@ -558,6 +558,18 @@ class LiftCubeStateRealEnv(Env):
         # add naive grav comp term
         real_qpos[2] += self.motor_3_bias
         real_qpos = np.clip(real_qpos, self.real_qpos_min, self.real_qpos_max)
+
+        # Move to an intermediate position halfway to the actual target position
+        real_qpos = np.array(real_qpos, dtype=np.int32)
+        current_real_qpos = np.array(self.realrobot.read_position(), dtype=np.int32)
+        halfway_qpos = current_real_qpos + 0.5 * (real_qpos - current_real_qpos)
+
+        # Ensure integer type for Dynamixel SDK
+        halfway_qpos = np.clip(halfway_qpos, self.real_qpos_min, self.real_qpos_max).astype(np.int32)
+        self.realrobot.set_goal_pos(halfway_qpos.tolist())
+        time.sleep(ACTION_SLEEP_SEC)
+
+        # Now move to the target position
         self.realrobot.set_goal_pos(real_qpos)
         time.sleep(ACTION_SLEEP_SEC)
         try:
@@ -627,8 +639,10 @@ class LiftCubeStateRealEnv(Env):
             # self.move_robot_to_pre_camera_position()
             if self.use_auto_target:
                 input("Using auto target. Press Enter to continue...")
-                observation = self.get_camera_observations(observation)
-                observation['target_eepos'] = observation['estimated_target_pos']
+                # observation = self.get_camera_observations(observation)
+                # observation['target_eepos'] = observation['estimated_target_pos']
+                # hardcode target for testing
+                observation['target_eepos'] = np.array([-0.07, 0.08, 0.002])
                 self.target = observation['target_eepos']
                 print(f"Auto target: {self.target}")
             else:
@@ -682,7 +696,8 @@ class LiftCubeStateRealEnv(Env):
         # print('gripper blocked', gripper_blocked)
 
         # print(f"gripper blocked: {gripper_blocked}, ee_pos: {observation['ee_pos']}")
-        success = gripper_blocked and observation['ee_pos'][2] >= 0.05
+        # success = gripper_blocked and observation['ee_pos'][2] >= 0.05
+        success = False # temporarily set to never success for filming
         observation["log_is_success"] = np.array([float(success)], dtype=np.float32) 
         reward += float(success) * 100
         reward = reward.item()
@@ -696,6 +711,9 @@ class LiftCubeStateRealEnv(Env):
         info["qpos"] = self.data.qpos.copy()
         info["qvel"] = self.data.qvel.copy()
         info.update(action_info)
+        # print out the ee_pos and the target_eepos and gripper_blocked
+        print(success)
+        print(observation['ee_pos'], observation['target_eepos'], observation['gripper_blocked'], observation['log_is_success'])
         return observation, reward, terminated, truncated, info
 
 
